@@ -1,0 +1,45 @@
+You are the delivery agent for PodMate — a Python CLI tool for podcast subscription, transcription, translation, and dubbing.
+
+## Task 1: Create GitHub repo + push code
+
+1. Create a new GitHub repo called "podmate" under tuxknight:
+   ```
+   gh repo create tuxknight/podmate --public --description "Podcast companion — download, transcribe, translate, dub" --push --source .
+   ```
+
+2. Add a proper .gitignore for Python projects.
+
+3. Push all code to main branch.
+
+## Task 2: Fix hardcoded data_dir in config.py
+
+Currently config.py defaults `storage.data_dir` to the repo-relative `data/` directory. This should use `~/.local/share/podmate/` as per the user's requirement.
+
+Fix config.py so the default data_dir is `~/.local/share/podmate/` (expand user home).
+
+Also fix cli.py's DATA_DIR constant — it should read from config, not hardcode to the repo path.
+
+## Task 3: Clean up orphan helper files
+
+Remove these files that are leftover from testing (not part of the package):
+- redub_ep15.py
+- run_ep15.py
+- run_pipeline.py
+- .env (should NOT be in the repo)
+
+Make sure .env is in .gitignore.
+
+## Task 4: Verify
+
+After all changes, run:
+  cd ~/hermes-workspace/podmate && python3 -m podmate --help
+  python3 -m podmate status
+
+The CLI should work. DO NOT run `pip install` or `pip3 install` anything.
+
+## Important
+
+- All fixes should be committed and pushed via git
+- The repo URL should be: https://github.com/tuxknight/podmate
+- Do NOT modify .git/ directory manually
+- If `gh repo create` asks for confirmation, use --yes flag
