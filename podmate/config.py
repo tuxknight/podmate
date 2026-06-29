@@ -29,7 +29,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "volume": "+0%",
     },
     "storage": {
-        "data_dir": os.path.expanduser("~/.local/share/podmate"),
+        "data_dir": str(Path.home() / ".local" / "share" / "podmate"),
         "keep_episodes": 5,
     },
 }

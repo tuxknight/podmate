@@ -28,18 +28,20 @@ from .db import (
 )
 from .feed import search_itunes, parse_feed, fetch_recent_episodes
 
-# ── 数据目录 ────────────────────────────────────────
-
 from .config import load as load_config
 
-DATA_DIR = os.path.expanduser(load_config()["storage"]["data_dir"])
 DATA_SUBDIRS = ["episodes", "transcripts", "translations", "dubs"]
+
+
+def _get_data_dir() -> str:
+    """Return configured data directory path."""
+    return load_config()["storage"]["data_dir"]
 
 
 def ensure_data_dirs() -> None:
     """确保数据目录存在。"""
     for sub in DATA_SUBDIRS:
-        os.makedirs(os.path.join(DATA_DIR, sub), exist_ok=True)
+        os.makedirs(os.path.join(_get_data_dir(), sub), exist_ok=True)
 
 
 # ── 控制台 ──────────────────────────────────────────
@@ -267,7 +269,7 @@ def unsubscribe(
         for ep in eps:
             for subdir in ("episodes", "transcripts", "translations", "dubs"):
                 ext = ".mp3" if subdir in ("episodes", "dubs") else ".json"
-                path = os.path.join(DATA_DIR, subdir, f"{ep.guid}{ext}")
+                path = os.path.join(_get_data_dir(), subdir, f"{ep.guid}{ext}")
                 if os.path.isfile(path):
                     try:
                         os.remove(path)
@@ -607,7 +609,7 @@ def status() -> None:
     info_lines.append("")
     info_lines.append("[bold]数据目录:[/bold]")
     for sub in DATA_SUBDIRS:
-        subdir = os.path.join(DATA_DIR, sub)
+        subdir = os.path.join(_get_data_dir(), sub)
         file_count = len(os.listdir(subdir)) if os.path.isdir(subdir) else 0
         info_lines.append(f"  • {sub}/: {file_count} 个文件")
 
@@ -676,7 +678,7 @@ def config(
 def _get_data_path(guid: str, subdir: str) -> str:
     """返回 data/{subdir}/{guid}.json 或 data/{subdir}/{guid}.mp3 的完整路径。"""
     ext = ".mp3" if subdir in ("episodes", "dubs") else ".json"
-    return os.path.join(DATA_DIR, subdir, f"{guid}{ext}")
+    return os.path.join(_get_data_dir(), subdir, f"{guid}{ext}")
 
 
 def _status_label(status: str) -> str:

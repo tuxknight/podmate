@@ -30,5 +30,8 @@ Thumbs.db
 # PodMate data (user-specific)
 data/
 
+# Prompts (task instructions)
+prompts/
+
 # Misc
 *.log
