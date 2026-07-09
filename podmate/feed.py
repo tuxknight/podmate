@@ -304,12 +304,7 @@ async def resolve_feed(
             if not pi_episodes and itunes_id:
                 pi_episodes = await podcast_index.search_by_itunes_id(itunes_id)
 
-            if pi_episodes and len(pi_episodes) > len(rss_episodes):
-                # Podcast Index 有更多剧集 — 使用 PI 数据作为更完整的来源
-                all_episodes = pi_episodes
-                source = "podcast-index"
-            elif pi_episodes and len(pi_episodes) == len(rss_episodes):
-                # 相同数量 — 合并补充可能缺失的字段（以 RSS 为基准，PI 补充）
+            if pi_episodes:
                 rss_guids = {ep.get("guid") for ep in rss_episodes}
                 new_from_pi = [
                     ep for ep in pi_episodes if ep.get("guid") not in rss_guids

@@ -17,6 +17,7 @@ class Feed:
     last_fetched_at: str | None = None
     episode_source: str = "rss"  # "rss" | "podcast-index" | "merged"
     total_episodes: int = 0
+    itunes_id: int | None = None
 
 
 @dataclass

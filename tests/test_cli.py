@@ -321,7 +321,7 @@ async def test_resolve_feed_rss_only():
 
 
 async def test_resolve_feed_with_podcast_index_more_episodes():
-    """When Podcast Index returns more episodes, prefer PI data."""
+    """When Podcast Index returns more episodes, merge with RSS as base."""
     client = PodcastIndexClient("key", "secret")
 
     mock_parsed = MagicMock()
@@ -335,11 +335,14 @@ async def test_resolve_feed_with_podcast_index_more_episodes():
         "image": img,
     })
 
-    mock_parsed.entries = [_mock_feedparser_entry({"id": "rss-1", "title": "RSS Ep"})]
+    mock_parsed.entries = [
+        _mock_feedparser_entry({"id": "rss-1", "title": "RSS Ep"}),
+        _mock_feedparser_entry({"id": "rss-only", "title": "RSS Only Ep"}),
+    ]
 
     pi_mock = _mock_httpx_client({
         "items": [
-            {"title": "PI Ep 1", "guid": "pi-1", "description": "",
+            {"title": "PI Ep 1", "guid": "rss-1", "description": "",
              "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
             {"title": "PI Ep 2", "guid": "pi-2", "description": "",
              "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
@@ -353,9 +356,11 @@ async def test_resolve_feed_with_podcast_index_more_episodes():
             podcast_index=client,
         )
 
-    assert result["episode_source"] == "podcast-index"
-    assert result["total_episodes"] == 2
-    assert result["episodes"][0]["guid"] == "pi-1"
+    # RSS episodes preserved + new PI episodes merged
+    assert result["episode_source"] == "merged"
+    assert result["total_episodes"] == 3
+    guids = {ep["guid"] for ep in result["episodes"]}
+    assert guids == {"rss-1", "rss-only", "pi-2"}
 
 
 async def test_resolve_feed_podcast_index_fails_silently():
@@ -394,7 +399,7 @@ async def test_resolve_feed_podcast_index_fails_silently():
 
 
 async def test_resolve_feed_rss_has_more_than_pi():
-    """When RSS has more episodes than PI, keep RSS data."""
+    """When RSS has more episodes than PI, merge unique PI episodes into RSS."""
     client = PodcastIndexClient("key", "secret")
 
     mock_parsed = MagicMock()
@@ -426,8 +431,11 @@ async def test_resolve_feed_rss_has_more_than_pi():
             podcast_index=client,
         )
 
-    assert result["episode_source"] == "rss"
-    assert result["total_episodes"] == 3
+    # RSS base + new PI episode merged in
+    assert result["episode_source"] == "merged"
+    assert result["total_episodes"] == 4
+    guids = {ep["guid"] for ep in result["episodes"]}
+    assert guids == {"rss-0", "rss-1", "rss-2", "pi-1"}
 
 
 # ── CLI: sub (URL mode) ────────────────────────────────────
@@ -678,3 +686,215 @@ def test_add_episode_duplicate_guid_is_ignored():
 
     episodes = get_episodes(feed_id=feed.id, limit=10)
     assert len(episodes) == 1
+
+
+# ── resolve_feed merge behavior ─────────────────────────
+
+
+async def test_resolve_feed_always_preserves_rss_episodes():
+    """RSS-only episodes (not in PI) survive the merge."""
+    client = PodcastIndexClient("key", "secret")
+
+    mock_parsed = MagicMock()
+    img = MagicMock()
+    img.href = ""
+    mock_parsed.feed = _mock_feed_meta({
+        "title": "Merge Test",
+        "link": "",
+        "author": "",
+        "subtitle": "",
+        "image": img,
+    })
+
+    mock_parsed.entries = [
+        _mock_feedparser_entry({"id": "rss-exclusive-1", "title": "RSS Only 1"}),
+        _mock_feedparser_entry({"id": "rss-exclusive-2", "title": "RSS Only 2"}),
+    ]
+
+    pi_mock = _mock_httpx_client({
+        "items": [
+            {"title": "PI Ep 1", "guid": "pi-1", "description": "",
+             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
+            {"title": "PI Ep 2", "guid": "pi-2", "description": "",
+             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
+            {"title": "PI Ep 3", "guid": "pi-3", "description": "",
+             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
+        ],
+    })
+
+    with patch("podmate.feed.feedparser.parse", return_value=mock_parsed), \
+         patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock):
+        result = await resolve_feed(
+            "https://example.com/feed.xml",
+            podcast_index=client,
+        )
+
+    assert result["episode_source"] == "merged"
+    assert result["total_episodes"] == 5
+    guids = {ep["guid"] for ep in result["episodes"]}
+    assert "rss-exclusive-1" in guids
+    assert "rss-exclusive-2" in guids
+    assert "pi-1" in guids
+    assert "pi-2" in guids
+    assert "pi-3" in guids
+
+
+async def test_resolve_feed_all_pi_duplicates_stays_rss():
+    """When all PI episodes duplicate RSS GUIDs, source stays 'rss'."""
+    client = PodcastIndexClient("key", "secret")
+
+    mock_parsed = MagicMock()
+    img = MagicMock()
+    img.href = ""
+    mock_parsed.feed = _mock_feed_meta({
+        "title": "Dup Test",
+        "link": "",
+        "author": "",
+        "subtitle": "",
+        "image": img,
+    })
+
+    mock_parsed.entries = [
+        _mock_feedparser_entry({"id": "shared-1", "title": "RSS Shared"}),
+    ]
+
+    pi_mock = _mock_httpx_client({
+        "items": [
+            {"title": "PI Shared", "guid": "shared-1", "description": "",
+             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
+        ],
+    })
+
+    with patch("podmate.feed.feedparser.parse", return_value=mock_parsed), \
+         patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock):
+        result = await resolve_feed(
+            "https://example.com/feed.xml",
+            podcast_index=client,
+        )
+
+    assert result["episode_source"] == "rss"
+    assert result["total_episodes"] == 1
+
+
+# ── CLI: refresh command ────────────────────────────────
+
+
+def test_refresh_command_no_pi_key_shows_error():
+    """When PI API key is not configured, refresh shows helpful error."""
+    feed = add_feed(url="https://example.com/refresh-test.xml", title="Refresh Test")
+    result = runner.invoke(app, ["refresh", str(feed.id)])
+    assert result.exit_code == 1
+    assert "未配置" in result.stdout
+
+
+def test_refresh_command_feed_not_found():
+    """When feed ID does not exist, refresh shows error."""
+    result = runner.invoke(app, ["refresh", "9999"])
+    assert result.exit_code == 1
+    assert "未找到" in result.stdout
+
+
+def test_refresh_command_adds_new_episodes(monkeypatch):
+    """Refresh resolves feed with PI client and adds new episodes via INSERT OR IGNORE."""
+    feed = add_feed(
+        url="https://example.com/refresh-episodes.xml",
+        title="Refresh Eps Test",
+        itunes_id=123456,
+    )
+    add_episode(feed_id=feed.id, guid="existing-ep", title="Existing Episode")
+
+    mock_feed_data = {
+        "title": "Refresh Eps Test",
+        "author": "Author",
+        "description": "Desc",
+        "image_url": "",
+        "link": "",
+        "episodes": [
+            {"title": "Existing Episode", "guid": "existing-ep", "description": "",
+             "pub_date": "", "audio_url": "", "duration_sec": 0},
+            {"title": "New Episode 1", "guid": "new-ep-1", "description": "",
+             "pub_date": "", "audio_url": "", "duration_sec": 0},
+            {"title": "New Episode 2", "guid": "new-ep-2", "description": "",
+             "pub_date": "", "audio_url": "", "duration_sec": 0},
+        ],
+        "episode_source": "merged",
+        "total_episodes": 3,
+    }
+
+    test_cfg = load_config().copy()
+    test_cfg["podcast_index"]["api_key"] = "pk-test"
+    test_cfg["podcast_index"]["api_secret"] = "sk-test"
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    with patch("podmate.cli.resolve_feed", new=AsyncMock(return_value=mock_feed_data)):
+        result = runner.invoke(app, ["refresh", str(feed.id)])
+
+    assert result.exit_code == 0
+    assert "刷新完成" in result.stdout
+    assert "新增剧集" in result.stdout
+    assert "3 集" in result.stdout
+
+    eps = get_episodes(feed_id=feed.id, limit=9999)
+    assert len(eps) == 3
+
+
+def test_refresh_command_preserves_existing_episodes(monkeypatch):
+    """Existing episodes are kept after refresh (INSERT OR IGNORE dedup)."""
+    feed = add_feed(
+        url="https://example.com/refresh-keep.xml",
+        title="Keep Test",
+        itunes_id=789,
+    )
+    add_episode(feed_id=feed.id, guid="keep-1", title="Keep Me")
+    add_episode(feed_id=feed.id, guid="keep-2", title="Keep Me Too")
+
+    mock_feed_data = {
+        "title": "Keep Test",
+        "author": "",
+        "description": "",
+        "image_url": "",
+        "link": "",
+        "episodes": [
+            {"title": "Keep Me", "guid": "keep-1", "description": "",
+             "pub_date": "", "audio_url": "", "duration_sec": 0},
+            {"title": "New Only", "guid": "new-only", "description": "",
+             "pub_date": "", "audio_url": "", "duration_sec": 0},
+        ],
+        "episode_source": "merged",
+        "total_episodes": 3,
+    }
+
+    test_cfg = load_config().copy()
+    test_cfg["podcast_index"]["api_key"] = "pk-test"
+    test_cfg["podcast_index"]["api_secret"] = "sk-test"
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    with patch("podmate.cli.resolve_feed", new=AsyncMock(return_value=mock_feed_data)):
+        result = runner.invoke(app, ["refresh", str(feed.id)])
+
+    assert result.exit_code == 0
+    eps = get_episodes(feed_id=feed.id, limit=9999)
+    guids = {ep.guid for ep in eps}
+    assert guids == {"keep-1", "keep-2", "new-only"}
+
+
+# ── DB: itunes_id column ────────────────────────────────
+
+
+def test_add_feed_stores_itunes_id():
+    """add_feed persists itunes_id in the feeds table."""
+    feed = add_feed(
+        url="https://example.com/itunes-test.xml",
+        title="ITunes ID Test",
+        itunes_id=424242,
+    )
+    assert feed.itunes_id == 424242
+
+
+def test_feed_itunes_id_defaults_to_none():
+    """When itunes_id is not passed, it stays None."""
+    feed = add_feed(
+        url="https://example.com/no-itunes-test.xml",
+        title="No ITunes ID",
+    )
+    assert feed.itunes_id is None

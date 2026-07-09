@@ -18,6 +18,7 @@ from .db import (
     count_stats,
     delete_episode,
     delete_feed,
+    get_connection,
     get_episode,
     get_episodes,
     get_feed,
@@ -218,6 +219,7 @@ def sub(
             image_url=feed_data.get("image_url") or None,
             episode_source=episode_source,
             total_episodes=total_episodes,
+            itunes_id=itunes_id,
         )
     except Exception as e:
         console.print(Panel(
@@ -268,6 +270,102 @@ def sub(
         + (f"\n[bold cyan]🆔 订阅 ID:[/bold cyan]   {feed_id}" if feed_id else "")
         + f"\n\n[bold]已记录 {added_count} 集:[/bold]\n{ep_list or '  [dim](无剧集)[/dim]'}",
         title="podmate sub",
+        border_style="green",
+    ))
+
+
+# ── 命令：refresh ────────────────────────────────────
+
+
+@app.command()
+def refresh(
+    feed_id: int = typer.Argument(
+        ..., help="要刷新的订阅 ID"
+    ),
+) -> None:
+    """刷新已订阅播客的剧集列表（需配置 Podcast Index API）。"""
+    feed = get_feed(feed_id)
+    if not feed:
+        console.print(f"[red]❌ 未找到订阅源 ID: {feed_id}[/red]")
+        raise typer.Exit(code=1)
+
+    pi_api_key = load_config().get("podcast_index", {}).get("api_key", "")
+    pi_api_secret = load_config().get("podcast_index", {}).get("api_secret", "")
+    if not pi_api_key or not pi_api_secret:
+        console.print(Panel(
+            "[yellow]⚠️ 未配置 Podcast Index API 密钥[/yellow]\n\n"
+            "[dim]请先配置 PI API 密钥以获取完整剧集列表:[/dim]\n"
+            "  [cyan]podmate config set podcast_index.api_key 'your_key'[/cyan]\n"
+            "  [cyan]podmate config set podcast_index.api_secret 'your_secret'[/cyan]\n\n"
+            "[dim]注册地址: https://podcastindex.org[/dim]",
+            title="缺少 API 密钥",
+            border_style="yellow",
+        ))
+        raise typer.Exit(code=1)
+
+    podcast_index = PodcastIndexClient(pi_api_key, pi_api_secret)
+
+    before_eps = get_episodes(feed_id=feed_id, limit=99999)
+    before_count = len(before_eps)
+
+    with console.status(f"[bold green]📡 正在刷新 {feed.title} ...[/bold green]"):
+        try:
+            feed_data = asyncio.run(resolve_feed(
+                feed.url,
+                itunes_id=feed.itunes_id,
+                podcast_index=podcast_index,
+            ))
+        except Exception as e:
+            console.print(Panel(
+                f"[red]❌ 刷新失败: {e}[/red]",
+                title="错误",
+                border_style="red",
+            ))
+            raise typer.Exit(code=1)
+
+    episodes = feed_data.get("episodes", [])
+    for ep in episodes:
+        try:
+            add_episode(
+                feed_id=feed_id,
+                guid=ep.get("guid", ""),
+                title=ep.get("title", ""),
+                description=ep.get("description"),
+                pub_date=ep.get("pub_date"),
+                audio_url=ep.get("audio_url"),
+                duration_sec=ep.get("duration_sec"),
+            )
+        except Exception:
+            pass
+
+    after_eps = get_episodes(feed_id=feed_id, limit=99999)
+    after_count = len(after_eps)
+    new_count = after_count - before_count
+
+    episode_source = feed_data.get("episode_source", "rss")
+    total_episodes = feed_data.get("total_episodes", after_count)
+    conn = get_connection()
+    conn.execute(
+        "UPDATE feeds SET last_fetched_at = datetime('now'),"
+        " episode_source = ?, total_episodes = ? WHERE id = ?",
+        (episode_source, total_episodes, feed_id),
+    )
+    conn.commit()
+
+    source_labels = {
+        "rss": "RSS",
+        "podcast-index": "Podcast Index",
+        "merged": "RSS + Podcast Index",
+    }
+    source_label = source_labels.get(episode_source, episode_source)
+
+    console.print(Panel(
+        f"[bold green]✅ 刷新完成![/bold green]\n\n"
+        f"[bold cyan]📡 播客:[/bold cyan] [bold]{feed.title}[/bold]\n"
+        f"[bold cyan]📻 新增剧集:[/bold cyan] {new_count} 集\n"
+        f"[bold cyan]📻 总剧集数:[/bold cyan] {after_count} 集\n"
+        f"[bold cyan]📡 数据来源:[/bold cyan] {source_label}",
+        title=f"podmate refresh #{feed_id}",
         border_style="green",
     ))
 
