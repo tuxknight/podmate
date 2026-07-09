@@ -96,6 +96,7 @@ def set_key(section: str, key: str, value: str) -> None:
 
 def _write(path: Path, cfg: dict) -> None:
     """Write config dict as TOML file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []
     for section, values in cfg.items():
         lines.append(f"\n[{section}]")
