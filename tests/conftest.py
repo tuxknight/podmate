@@ -13,6 +13,7 @@ def temp_db(monkeypatch, tmp_path):
         "deepgram": {"api_key": "", "api_url": "", "model": "", "diarize": False},
         "deepseek": {"api_key": "", "api_url": "", "model": "", "temperature": 0.3},
         "dubbing": {"voice": "", "rate": "", "volume": ""},
+        "podcast_index": {"api_key": "", "api_secret": ""},
         "storage": {"data_dir": str(tmp_path), "keep_episodes": 5},
     }
 

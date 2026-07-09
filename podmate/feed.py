@@ -1,13 +1,18 @@
-"""PodMate RSS 订阅发现与解析模块。"""
+"""PodMate RSS 订阅发现与解析模块 — iTunes 搜索、RSS 解析、Podcast Index 集成。"""
 
 from __future__ import annotations
 
+import hashlib
+import logging
 import re
+import time
 from typing import Any
 from urllib.parse import quote
 
 import feedparser
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # ── iTunes Search ─────────────────────────────────────
 
@@ -16,7 +21,7 @@ async def search_itunes(keyword: str, limit: int = 10) -> list[dict[str, Any]]:
     """搜索 iTunes Podcast API，返回播客列表。
 
     返回的每个 dict 包含:
-        trackName, artistName, feedUrl, artworkUrl100, trackCount
+        trackName, artistName, feedUrl, artworkUrl100, trackCount, collectionId
     """
     url = f"https://itunes.apple.com/search?term={quote(keyword)}&media=podcast&limit={limit}"
     async with httpx.AsyncClient(timeout=15.0) as client:
@@ -35,6 +40,7 @@ async def search_itunes(keyword: str, limit: int = 10) -> list[dict[str, Any]]:
             "feedUrl": feed_url,
             "artworkUrl100": item.get("artworkUrl100", ""),
             "trackCount": item.get("trackCount", 0),
+            "collectionId": item.get("collectionId", 0),
         })
     return results
 
@@ -156,6 +162,173 @@ def parse_feed(url: str) -> dict[str, Any]:
         "image_url": image_url,
         "link": feed_meta.get("link", ""),
         "episodes": episodes,
+    }
+
+
+# ── Podcast Index API ──────────────────────────────────
+
+
+class PodcastIndexClient:
+    """Podcast Index API 客户端，用于查询播客完整剧集列表。
+
+    Podcast Index (https://podcastindex.org) 是一个开放的播客搜索索引。
+    提供按 feed URL 或 iTunes ID 查询剧集的 API，通常比 RSS feed 包含更完整的剧集列表。
+
+    API 认证需要注册获取 api_key 和 api_secret。
+    认证方式：HTTP 头 X-Auth-Key + X-Auth-Date + Authorization (SHA1 签名)。
+    """
+
+    BASE_URL = "https://api.podcastindex.org/api/1.0"
+
+    def __init__(self, api_key: str, api_secret: str) -> None:
+        """初始化 Podcast Index 客户端。
+
+        Args:
+            api_key: Podcast Index API key。
+            api_secret: Podcast Index API secret。
+        """
+        self.api_key = api_key
+        self.api_secret = api_secret
+
+    def _auth_headers(self) -> dict[str, str]:
+        """生成 Podcast Index API 认证头。
+
+        签名算法：SHA1(api_key + api_secret + unix_timestamp)。
+        """
+        ts = str(int(time.time()))
+        auth_hash = hashlib.sha1(
+            (self.api_key + self.api_secret + ts).encode()
+        ).hexdigest()
+        return {
+            "X-Auth-Date": ts,
+            "X-Auth-Key": self.api_key,
+            "Authorization": auth_hash,
+        }
+
+    async def search_by_feed_url(self, feed_url: str) -> list[dict[str, Any]]:
+        """按 feed URL 查询剧集列表。
+
+        Args:
+            feed_url: 播客 RSS feed URL。
+
+        Returns:
+            剧集列表，每项包含 title, guid, description, pub_date, audio_url, duration_sec。
+        """
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{self.BASE_URL}/episodes/byfeedurl",
+                params={"url": feed_url},
+                headers=self._auth_headers(),
+            )
+            resp.raise_for_status()
+            data = await resp.json()
+        return self._parse_episodes(data)
+
+    async def search_by_itunes_id(self, itunes_id: int) -> list[dict[str, Any]]:
+        """按 iTunes 播客 ID 查询剧集列表。
+
+        Args:
+            itunes_id: iTunes 播客 collection ID。
+
+        Returns:
+            剧集列表，每项包含 title, guid, description, pub_date, audio_url, duration_sec。
+        """
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{self.BASE_URL}/episodes/byitunesid",
+                params={"id": itunes_id},
+                headers=self._auth_headers(),
+            )
+            resp.raise_for_status()
+            data = await resp.json()
+        return self._parse_episodes(data)
+
+    @staticmethod
+    def _parse_episodes(data: dict[str, Any]) -> list[dict[str, Any]]:
+        """解析 Podcast Index API 返回的剧集数据。"""
+        items = data.get("items", [])
+        episodes: list[dict[str, Any]] = []
+        for item in items:
+            duration = item.get("duration", 0)
+            if isinstance(duration, str):
+                duration = _parse_duration(duration)
+            episodes.append({
+                "title": item.get("title", ""),
+                "guid": item.get("guid", ""),
+                "description": _strip_html(item.get("description", "")),
+                "pub_date": item.get("datePublishedPretty", ""),
+                "audio_url": item.get("enclosureUrl", ""),
+                "duration_sec": duration or 0,
+            })
+        return episodes
+
+
+# ── Resolve feed (RSS + optional Podcast Index) ────────
+
+
+async def resolve_feed(
+    feed_url: str,
+    itunes_id: int | None = None,
+    podcast_index: PodcastIndexClient | None = None,
+) -> dict[str, Any]:
+    """解析播客 RSS，尽可能通过 Podcast Index 获取完整剧集列表。
+
+    策略：
+    1. 先用 RSS 解析获取基础剧集列表。
+    2. 如果配置了 PodcastIndexClient，尝试通过 Podcast Index API 查询更多剧集。
+    3. 如果 Podcast Index 返回的剧集数更多，优先使用 Podcast Index 数据（更完整）。
+    4. 按 guid 去重。
+    5. API 调用失败时静默回退到 RSS 模式。
+
+    Args:
+        feed_url: 播客 RSS feed URL。
+        itunes_id: iTunes 播客 collection ID（可选，用于 Podcast Index 备选查询）。
+        podcast_index: PodcastIndexClient 实例（可选，未提供则仅使用 RSS）。
+
+    Returns:
+        {
+            "title": str, "author": str, "description": str,
+            "image_url": str, "link": str, "episodes": [...],
+            "episode_source": "rss" | "podcast-index" | "merged",
+            "total_episodes": int,
+        }
+    """
+    rss_data = parse_feed(feed_url)
+    rss_episodes = rss_data.get("episodes", [])
+    source = "rss"
+    all_episodes = rss_episodes
+
+    if podcast_index is not None:
+        try:
+            pi_episodes = await podcast_index.search_by_feed_url(feed_url)
+            if not pi_episodes and itunes_id:
+                pi_episodes = await podcast_index.search_by_itunes_id(itunes_id)
+
+            if pi_episodes and len(pi_episodes) > len(rss_episodes):
+                # Podcast Index 有更多剧集 — 使用 PI 数据作为更完整的来源
+                all_episodes = pi_episodes
+                source = "podcast-index"
+            elif pi_episodes and len(pi_episodes) == len(rss_episodes):
+                # 相同数量 — 合并补充可能缺失的字段（以 RSS 为基准，PI 补充）
+                rss_guids = {ep.get("guid") for ep in rss_episodes}
+                new_from_pi = [
+                    ep for ep in pi_episodes if ep.get("guid") not in rss_guids
+                ]
+                if new_from_pi:
+                    all_episodes = rss_episodes + new_from_pi
+                    source = "merged"
+        except Exception:
+            logger.debug("Podcast Index API failed, falling back to RSS", exc_info=True)
+
+    return {
+        "title": rss_data.get("title", ""),
+        "author": rss_data.get("author", ""),
+        "description": rss_data.get("description", ""),
+        "image_url": rss_data.get("image_url", ""),
+        "link": rss_data.get("link", ""),
+        "episodes": all_episodes,
+        "episode_source": source,
+        "total_episodes": len(all_episodes),
     }
 
 

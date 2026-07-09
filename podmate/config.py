@@ -27,6 +27,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "rate": "+0%",
         "volume": "+0%",
     },
+    "podcast_index": {
+        "api_key": "",
+        "api_secret": "",
+    },
     "storage": {
         "data_dir": str(Path.home() / ".local" / "share" / "podmate"),
         "keep_episodes": 5,

@@ -71,6 +71,15 @@ def init_db() -> None:
     _add_column_if_missing(conn, "episodes", "transcript_path", "TEXT")
     _add_column_if_missing(conn, "episodes", "translation_path", "TEXT")
     _add_column_if_missing(conn, "episodes", "dub_path", "TEXT")
+    _add_column_if_missing(conn, "feeds", "episode_source", "TEXT DEFAULT 'rss'")
+    _add_column_if_missing(conn, "feeds", "total_episodes", "INTEGER DEFAULT 0")
+
+    # 为 episodes.guid 添加 UNIQUE 约束（替换旧的非唯一索引）
+    conn.execute("DROP INDEX IF EXISTS idx_episodes_guid")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_guid_unique ON episodes(guid)"
+    )
+    conn.commit()
 
 
 # ── Feeds ──────────────────────────────────────────────
@@ -78,13 +87,16 @@ def init_db() -> None:
 
 def add_feed(url: str, title: str, author: str | None = None,
              description: str | None = None,
-             image_url: str | None = None) -> Feed:
+             image_url: str | None = None,
+             episode_source: str = "rss",
+             total_episodes: int = 0) -> Feed:
     """添加订阅源。如果 URL 已存在则忽略。"""
     conn = get_connection()
     conn.execute(
-        """INSERT OR IGNORE INTO feeds (url, title, author, description, image_url)
-           VALUES (?, ?, ?, ?, ?)""",
-        (url, title, author, description, image_url),
+        """INSERT OR IGNORE INTO feeds
+               (url, title, author, description, image_url, episode_source, total_episodes)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (url, title, author, description, image_url, episode_source, total_episodes),
     )
     conn.commit()
     return get_feed_by_url(url)
@@ -284,6 +296,7 @@ def auto_vacuum() -> None:
 
 
 def _row_to_feed(row: sqlite3.Row) -> Feed:
+    keys = row.keys()
     return Feed(
         id=row["id"],
         title=row["title"],
@@ -293,6 +306,8 @@ def _row_to_feed(row: sqlite3.Row) -> Feed:
         image_url=row["image_url"],
         added_at=row["added_at"],
         last_fetched_at=row["last_fetched_at"],
+        episode_source=row["episode_source"] if "episode_source" in keys else "rss",
+        total_episodes=row["total_episodes"] if "total_episodes" in keys else 0,
     )
 
 

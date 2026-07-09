@@ -24,7 +24,7 @@ from .db import (
     get_feeds,
     init_db,
 )
-from .feed import parse_feed, search_itunes
+from .feed import PodcastIndexClient, resolve_feed, search_itunes
 
 DATA_SUBDIRS = ["episodes", "transcripts", "translations", "dubs"]
 
@@ -128,6 +128,7 @@ def sub(
 ) -> None:
     """订阅一个播客。支持 RSS URL 或关键词搜索。"""
     feed_url: str | None = None
+    itunes_id: int | None = None
 
     # URL 模式
     if url.startswith("http://") or url.startswith("https://"):
@@ -166,17 +167,30 @@ def sub(
                 console.print(f"[red]❌ 编号超出范围: {idx}，有效范围 1-{len(results)}[/red]")
                 raise typer.Exit(code=1)
 
-        feed_url = results[idx - 1]["feedUrl"]
-        console.print(f"📋 已选择: [bold]{results[idx - 1]['trackName']}[/bold]")
+        selected = results[idx - 1]
+        feed_url = selected["feedUrl"]
+        itunes_id = selected.get("collectionId") or None
+        console.print(f"📋 已选择: [bold]{selected['trackName']}[/bold]")
 
     if not feed_url:
         console.print("[red]❌ 无法获取 RSS 地址[/red]")
         raise typer.Exit(code=1)
 
-    # 解析订阅源
+    # 构建 PodcastIndexClient（如果配置了 API key）
+    podcast_index: PodcastIndexClient | None = None
+    pi_api_key = load_config().get("podcast_index", {}).get("api_key", "")
+    pi_api_secret = load_config().get("podcast_index", {}).get("api_secret", "")
+    if pi_api_key and pi_api_secret:
+        podcast_index = PodcastIndexClient(pi_api_key, pi_api_secret)
+
+    # 解析订阅源（RSS + 可选 Podcast Index）
     with console.status(f"[bold green]📡 正在解析 {feed_url} ...[/bold green]"):
         try:
-            feed_data = parse_feed(feed_url)
+            feed_data = asyncio.run(resolve_feed(
+                feed_url,
+                itunes_id=itunes_id,
+                podcast_index=podcast_index,
+            ))
         except Exception as e:
             console.print(Panel(
                 f"[red]❌ 解析订阅源失败: {e}[/red]\n\n"
@@ -191,6 +205,9 @@ def sub(
         console.print("[red]❌ 无法获取订阅源标题，请检查 URL[/red]")
         raise typer.Exit(code=1)
 
+    episode_source = feed_data.get("episode_source", "rss")
+    total_episodes = feed_data.get("total_episodes", 0)
+
     # 存入数据库
     try:
         feed = add_feed(
@@ -199,6 +216,8 @@ def sub(
             author=feed_data.get("author") or None,
             description=feed_data.get("description") or None,
             image_url=feed_data.get("image_url") or None,
+            episode_source=episode_source,
+            total_episodes=total_episodes,
         )
     except Exception as e:
         console.print(Panel(
@@ -210,10 +229,10 @@ def sub(
 
     feed_id = feed.id
 
-    # 获取最近剧集元信息
-    episodes = feed_data.get("episodes", [])[:5]
+    # 存入全部剧集元信息
+    episodes = feed_data.get("episodes", [])
     added_count = 0
-    with console.status(f"[bold green]📥 正在获取最近 {len(episodes)} 集信息 ...[/bold green]"):
+    with console.status(f"[bold green]📥 正在获取 {len(episodes)} 集信息 ...[/bold green]"):
         for ep in episodes:
             try:
                 add_episode(
@@ -230,6 +249,12 @@ def sub(
                 pass
 
     # 显示成功信息
+    source_labels = {
+        "rss": "RSS",
+        "podcast-index": "Podcast Index",
+        "merged": "RSS + Podcast Index",
+    }
+    source_label = source_labels.get(episode_source, episode_source)
     ep_list = "\n".join(
         f"  [dim]{i+1}.[/dim] {ep.get('title', '')[:50]}"
         for i, ep in enumerate(episodes[:5])
@@ -239,9 +264,9 @@ def sub(
         f"[bold cyan]📡 播客名称:[/bold cyan] [bold]{feed_title}[/bold]\n"
         f"[bold cyan]✍️ 作者:[/bold cyan]      {feed_data.get('author', '-')}\n"
         f"[bold cyan]🔗 RSS:[/bold cyan]        [dim]{feed_url}[/dim]\n"
-        f"[bold cyan]📻 剧集数:[/bold cyan]    {len(feed_data.get('episodes', []))} 集"
+        f"[bold cyan]📻 剧集数:[/bold cyan]    {total_episodes} 集（来源: {source_label}）"
         + (f"\n[bold cyan]🆔 订阅 ID:[/bold cyan]   {feed_id}" if feed_id else "")
-        + f"\n\n[bold]最近 {added_count} 集已记录:[/bold]\n{ep_list}",
+        + f"\n\n[bold]已记录 {added_count} 集:[/bold]\n{ep_list or '  [dim](无剧集)[/dim]'}",
         title="podmate sub",
         border_style="green",
     ))
@@ -784,6 +809,13 @@ def config(
             console.print("[dim]请运行以下命令设置 API key:[/dim]")
             console.print("  [cyan]podmate config set deepgram.api_key 'your_key'[/cyan]")
             console.print("  [cyan]podmate config set deepseek.api_key 'your_key'[/cyan]")
+            console.print(
+                "[dim]可选 - Podcast Index 获取完整剧集 (https://podcastindex.org):[/dim]"
+            )
+            console.print("  [cyan]podmate config set podcast_index.api_key 'your_key'[/cyan]")
+            console.print(
+                "  [cyan]podmate config set podcast_index.api_secret 'your_secret'[/cyan]"
+            )
         else:
             console.print("[yellow]配置文件已存在[/yellow]")
 
