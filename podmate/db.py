@@ -2,7 +2,7 @@
 
 import os
 import sqlite3
-from typing import Any, Optional
+from typing import Any
 
 from .config import load as load_config
 from .models import Episode, Feed
@@ -12,7 +12,7 @@ from .models import Episode, Feed
 DB_DIR = os.path.expanduser(load_config()["storage"]["data_dir"])
 DB_PATH = os.path.join(DB_DIR, "feeds.db")
 
-_conn: Optional[sqlite3.Connection] = None
+_conn: sqlite3.Connection | None = None
 
 
 def get_connection() -> sqlite3.Connection:
@@ -76,9 +76,9 @@ def init_db() -> None:
 # ── Feeds ──────────────────────────────────────────────
 
 
-def add_feed(url: str, title: str, author: Optional[str] = None,
-             description: Optional[str] = None,
-             image_url: Optional[str] = None) -> Feed:
+def add_feed(url: str, title: str, author: str | None = None,
+             description: str | None = None,
+             image_url: str | None = None) -> Feed:
     """添加订阅源。如果 URL 已存在则忽略。"""
     conn = get_connection()
     conn.execute(
@@ -90,14 +90,14 @@ def add_feed(url: str, title: str, author: Optional[str] = None,
     return get_feed_by_url(url)
 
 
-def get_feed_by_url(url: str) -> Optional[Feed]:
+def get_feed_by_url(url: str) -> Feed | None:
     """按 URL 查询单个订阅源。"""
     conn = get_connection()
     row = conn.execute("SELECT * FROM feeds WHERE url = ?", (url,)).fetchone()
     return _row_to_feed(row) if row else None
 
 
-def get_feed(feed_id: int) -> Optional[Feed]:
+def get_feed(feed_id: int) -> Feed | None:
     """按 ID 查询单个订阅源。"""
     conn = get_connection()
     row = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
@@ -135,10 +135,10 @@ def delete_feed(feed_id: int) -> bool:
 
 
 def add_episode(feed_id: int, guid: str, title: str,
-                description: Optional[str] = None,
-                pub_date: Optional[str] = None,
-                audio_url: Optional[str] = None,
-                duration_sec: Optional[int] = None) -> Episode:
+                description: str | None = None,
+                pub_date: str | None = None,
+                audio_url: str | None = None,
+                duration_sec: int | None = None) -> Episode:
     """添加剧集。如果 guid 已存在则忽略。"""
     conn = get_connection()
     conn.execute(
@@ -155,7 +155,7 @@ def add_episode(feed_id: int, guid: str, title: str,
     return _row_to_episode(row)
 
 
-def get_episodes(feed_id: Optional[int] = None, status: Optional[str] = None,
+def get_episodes(feed_id: int | None = None, status: str | None = None,
                  limit: int = 20, offset: int = 0) -> list[Episode]:
     """列出剧集，可选按订阅源/状态筛选。"""
     conn = get_connection()
@@ -181,7 +181,7 @@ def get_episodes(feed_id: Optional[int] = None, status: Optional[str] = None,
     return [_row_to_episode(r) for r in rows]
 
 
-def get_episode(episode_id: int) -> Optional[Episode]:
+def get_episode(episode_id: int) -> Episode | None:
     """按 ID 查询单集。"""
     conn = get_connection()
     row = conn.execute(
@@ -195,8 +195,8 @@ def get_episode(episode_id: int) -> Optional[Episode]:
 
 
 def update_episode_status(episode_id: int, status: str,
-                          progress: Optional[float] = None,
-                          error_message: Optional[str] = None) -> None:
+                          progress: float | None = None,
+                          error_message: str | None = None) -> None:
     """更新剧集状态。"""
     conn = get_connection()
     sets = ["status = ?"]
@@ -320,7 +320,9 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
     )
 
 
-def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, col_type: str) -> None:
+def _add_column_if_missing(
+    conn: sqlite3.Connection, table: str, column: str, col_type: str,
+) -> None:
     """安全地添加列（如果不存在）。"""
     cursor = conn.execute(f"PRAGMA table_info({table})")
     existing = {row[1] for row in cursor.fetchall()}

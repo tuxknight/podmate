@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from typing import Any
 
 import httpx
@@ -76,13 +75,16 @@ async def translate_segments(
         "As a professional podcast analyst, analyze the following transcript excerpt.\n"
         "Identify:\n"
         "1. The main topic(s) being discussed\n"
-        "2. The speaker's tone and speaking style (e.g., enthusiastic, academic, conversational, dramatic)\n"
+        "2. The speaker's tone and speaking style"
+        " (e.g., enthusiastic, academic, conversational, dramatic)\n"
         "3. Any technical terminology or jargon domains\n\n"
         f"Transcript:\n{first_text}\n\n"
         "Return your analysis concisely in Chinese, 100 characters max."
     )
 
-    analysis_result = await _call_deepseek(analysis_prompt, system_role="你是一个播客分析专家。用中文简洁回复。")
+    analysis_result = await _call_deepseek(
+        analysis_prompt, system_role="你是一个播客分析专家。用中文简洁回复。",
+    )
     tone_analysis = analysis_result.get("content", "")
 
     # 逐批翻译
@@ -337,7 +339,6 @@ def _parse_summary(content: str) -> dict[str, Any]:
     }
 
     lines = content.strip().split("\n")
-    current_section = None
 
     for line in lines:
         line = line.strip()

@@ -142,7 +142,7 @@ async def dub_translation(
                         communicate = edge_tts.Communicate(ssml_text, spk_voice)
                         await communicate.save(tmp)
                         break
-                    except Exception as e:
+                    except Exception:
                         if attempt < 2:
                             await asyncio.sleep(5)
                             continue
@@ -215,7 +215,7 @@ def _dub_text(
 
     try:
         for i, chunk in enumerate(chunks):
-            temp_fd, temp_path = tempfile.mkstemp(suffix=f".mp3")
+            temp_fd, temp_path = tempfile.mkstemp(suffix=".mp3")
             os.close(temp_fd)
             temp_files.append(temp_path)
             asyncio.run(_generate_audio(chunk, temp_path, voice, rate, volume))

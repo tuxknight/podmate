@@ -2,22 +2,20 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from typing import Any
 
+from .config import load as load_config
 from .db import (
     get_episode,
     set_episode_path,
     update_episode_status,
 )
 from .downloader import download_episode
+from .dubbing import dub_translation
 from .transcriber import transcribe_via_deepgram
 from .translator import translate_segments
-from .dubbing import dub_translation
-
-from .config import load as load_config
 
 DATA_DIR = os.path.expanduser(load_config()["storage"]["data_dir"])
 
@@ -52,7 +50,7 @@ async def run_pipeline(
     episode_id: int,
     *,
     skip_dub: bool = False,
-    progress_callback: Optional[object] = None,
+    progress_callback: object | None = None,
 ) -> dict[str, Any]:
     """运行一集的完整流水线：下载 → 转写 → 翻译 → 配音。
 

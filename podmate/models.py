@@ -1,7 +1,6 @@
 """PodMate 数据模型。"""
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 
 @dataclass
@@ -11,11 +10,11 @@ class Feed:
     id: int
     title: str
     url: str
-    author: Optional[str] = None
-    description: Optional[str] = None
-    image_url: Optional[str] = None
+    author: str | None = None
+    description: str | None = None
+    image_url: str | None = None
     added_at: str = ""
-    last_fetched_at: Optional[str] = None
+    last_fetched_at: str | None = None
 
 
 @dataclass
@@ -26,17 +25,18 @@ class Episode:
     feed_id: int
     guid: str
     title: str
-    description: Optional[str] = None
-    pub_date: Optional[str] = None
-    audio_url: Optional[str] = None
-    duration_sec: Optional[int] = None
-    local_path: Optional[str] = None
-    transcript_path: Optional[str] = None
-    translation_path: Optional[str] = None
-    dub_path: Optional[str] = None
-    status: str = "none"  # none | downloading | downloaded | transcribing | transcribed | translating | translated | dubbing | dubbed | error
+    description: str | None = None
+    pub_date: str | None = None
+    audio_url: str | None = None
+    duration_sec: int | None = None
+    local_path: str | None = None
+    transcript_path: str | None = None
+    translation_path: str | None = None
+    dub_path: str | None = None
+    status: str = "none"  # none | downloading | downloaded | transcribing  # noqa: E501
+    # | transcribed | translating | translated | dubbing | dubbed | error
     progress: float = 0.0  # 0.0–1.0
-    error_message: Optional[str] = None
+    error_message: str | None = None
     created_at: str = ""
     # computed via JOIN
-    feed_title: Optional[str] = None
+    feed_title: str | None = None

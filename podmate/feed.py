@@ -22,7 +22,7 @@ async def search_itunes(keyword: str, limit: int = 10) -> list[dict[str, Any]]:
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(url)
         resp.raise_for_status()
-        data = resp.json()
+        data = await resp.json()
 
     results: list[dict[str, Any]] = []
     for item in data.get("results", []):

@@ -2,34 +2,29 @@
 
 import asyncio
 import os
-import sys
-from typing import Optional
 
 import typer
+from rich import box
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.prompt import IntPrompt
-from rich import box
+from rich.table import Table
 
 from . import __version__
-from .db import (
-    init_db,
-    get_feeds,
-    get_feed,
-    get_episodes,
-    get_episode,
-    count_stats,
-    search_episodes,
-    search_feeds,
-    add_feed,
-    add_episode,
-    delete_feed,
-    delete_episode,
-)
-from .feed import search_itunes, parse_feed, fetch_recent_episodes
-
 from .config import load as load_config
+from .db import (
+    add_episode,
+    add_feed,
+    count_stats,
+    delete_episode,
+    delete_feed,
+    get_episode,
+    get_episodes,
+    get_feed,
+    get_feeds,
+    init_db,
+)
+from .feed import parse_feed, search_itunes
 
 DATA_SUBDIRS = ["episodes", "transcripts", "translations", "dubs"]
 
@@ -126,7 +121,7 @@ def sub(
     url: str = typer.Argument(
         ..., help="RSS 订阅地址或播客关键词"
     ),
-    pick: Optional[int] = typer.Option(
+    pick: int | None = typer.Option(
         None, "--pick", "-p",
         help="直接选择搜索结果中的第 N 个"
     ),
@@ -266,7 +261,7 @@ def unsubscribe(
     ),
 ) -> None:
     """取消订阅一个播客。"""
-    from .db import get_feed, get_episodes, delete_feed, delete_episode
+    from .db import delete_episode, get_episodes, get_feed
 
     feed = get_feed(feed_id)
     if not feed:
@@ -278,7 +273,8 @@ def unsubscribe(
         f"[yellow]即将取消订阅: [bold]{feed.title}[/bold][/yellow]\n"
         f"[yellow]作者: {feed.author or '-'}[/yellow]\n"
         f"[yellow]影响 {len(eps)} 集记录[/yellow]\n\n"
-        + (f"[dim]使用 --force 同时删除本地文件[/dim]" if not force else "[red]将删除所有本地文件[/red]"),
+        + ("[dim]使用 --force 同时删除本地文件[/dim]" if not force
+           else "[red]将删除所有本地文件[/red]"),
         title="📡 podmate unsubscribe",
         border_style="yellow",
     ))
@@ -304,7 +300,7 @@ def unsubscribe(
 
 @app.command(name="list")
 def list_episodes(
-    feed_id: Optional[int] = typer.Option(
+    feed_id: int | None = typer.Option(
         None, "--feed", "-f",
         help="按订阅源 ID 筛选剧集"
     ),
@@ -552,7 +548,7 @@ def download(
     console.print(f"\n[bold]🚀 启动流水线:[/bold] [cyan]{ep.title}[/cyan]\n")
 
     try:
-        result = asyncio.run(run_pipeline(
+        asyncio.run(run_pipeline(
             episode_id,
             skip_dub=skip_dub,
         ))
@@ -560,8 +556,10 @@ def download(
         console.print()
         console.print(Panel(
             f"[bold green]✅ 全部完成! 剧集 #{episode_id}[/bold green]\n\n"
-            f"[bold cyan]▶️ 播放原声:[/bold cyan]     [green]podmate play {episode_id}[/green]\n"
-            f"[bold cyan]🎙️ 播放配音:[/bold cyan]     [green]podmate play {episode_id} --dub[/green]\n"
+            f"[bold cyan]▶️ 播放原声:[/bold cyan]     "
+            f"[green]podmate play {episode_id}[/green]\n"
+            f"[bold cyan]🎙️ 播放配音:[/bold cyan]     "
+            f"[green]podmate play {episode_id} --dub[/green]\n"
             f"[bold cyan]📄 查看详情:[/bold cyan]     [green]podmate show {episode_id}[/green]",
             title="PodMate 处理完成",
             border_style="green",
@@ -777,7 +775,8 @@ def config(
     value: str = typer.Argument(None, help="配置值（set 时必填）"),
 ) -> None:
     """管理 PodMate 配置。"""
-    from .config import init, show as config_show, set_key
+    from .config import init, set_key
+    from .config import show as config_show
 
     if action == "init":
         if init():

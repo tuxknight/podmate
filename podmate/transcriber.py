@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
 from typing import Any
 
@@ -163,7 +162,8 @@ def _parse_deepgram_response(data: dict[str, Any]) -> dict[str, Any]:
       results.channels[0].alternatives[0]:
         - transcript: 全文
         - paragraphs.transcript: 分段全文（含换行）
-        - paragraphs.paragraphs: [{sentences: [{text, start, end, speaker}], speaker, num_words, start, end}]
+        - paragraphs.paragraphs:
+          [{sentences: [{text, start, end, speaker}], speaker, num_words, start, end}]
         - words: [{word, start, end, speaker, ...}]
         - language
         - duration
