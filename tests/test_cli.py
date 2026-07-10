@@ -6,6 +6,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import pytest
 from typer.testing import CliRunner
 
 from podmate.cli import app
@@ -19,8 +20,36 @@ from podmate.db import (
     get_feeds,
     set_episode_path,
 )
+from podmate.downloader import download_episode
+from podmate.dubbing import (
+    _concat_audio,
+    _generate_audio,
+    _majority_tone,
+    _split_text,
+    dub_translation,
+    get_voice_for_speaker,
+    wrap_with_tone,
+)
 from podmate.feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
-from podmate.transcriber import _add_tone_markers, _format_time, format_transcript
+from podmate.player import (
+    _build_player_command,
+    get_available_player,
+    play_episode,
+    play_file,
+)
+from podmate.transcriber import (
+    _add_tone_markers,
+    _format_time,
+    _parse_deepgram_response,
+    _speaker_label,
+    format_transcript,
+    transcribe_via_deepgram,
+)
+from podmate.translator import (
+    _extract_translation,
+    _parse_summary,
+    translate_segments,
+)
 
 runner = CliRunner()
 
@@ -2563,3 +2592,729 @@ def test_cli_export_negative_id_via_option(tmp_path, monkeypatch):
     assert "已导出到" in result.stdout
     copied_md = cbrain_dir / "export-neg-guid.md"
     assert copied_md.is_file()
+
+
+# ═══════════════════════════════════════════════════════════
+# Smoke tests for previously untested modules (issue #5)
+# ═══════════════════════════════════════════════════════════
+
+
+# ── player ─────────────────────────────────────────────
+
+
+def test_get_available_player_found(monkeypatch):
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: p if p == "mpv" else None)
+    assert get_available_player() == "mpv"
+
+
+def test_get_available_player_not_found(monkeypatch):
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: None)
+    assert get_available_player() is None
+
+
+def test_get_available_player_cached(monkeypatch):
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: p if p == "ffplay" else None)
+    first = get_available_player()
+    monkeypatch.setattr("shutil.which", lambda p: p if p == "mpv" else None)
+    second = get_available_player()
+    assert first == second == "ffplay"
+
+
+def test_play_file_not_found(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        play_file(str(tmp_path / "nonexistent.mp3"))
+
+
+def test_play_file_no_player(monkeypatch, tmp_path):
+    audio = tmp_path / "test.mp3"
+    audio.write_text("fake audio")
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: None)
+    with pytest.raises(RuntimeError, match="未找到可用的播放器"):
+        play_file(str(audio))
+
+
+def test_play_file_foreground(monkeypatch, tmp_path):
+    audio = tmp_path / "test.mp3"
+    audio.write_text("fake audio")
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: "mpv")
+    mock_run = MagicMock()
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = play_file(str(audio))
+    assert result is None
+    mock_run.assert_called_once()
+
+
+def test_play_file_background(monkeypatch, tmp_path):
+    audio = tmp_path / "test.mp3"
+    audio.write_text("fake audio")
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: "mpv")
+    mock_popen = MagicMock()
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+
+    result = play_file(str(audio), background=True)
+    assert result is mock_popen.return_value
+    mock_popen.assert_called_once()
+
+
+def test_play_episode_no_player(monkeypatch):
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: None)
+    with pytest.raises(RuntimeError, match="未找到可用的播放器"):
+        play_episode("test.mp3")
+
+
+def test_play_episode_foreground(monkeypatch):
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: "mpv")
+    mock_run = MagicMock()
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = play_episode("test.mp3")
+    assert result is None
+    mock_run.assert_called_once()
+
+
+def test_play_episode_background(monkeypatch):
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: "mpv")
+    mock_popen = MagicMock()
+    monkeypatch.setattr("subprocess.Popen", mock_popen)
+
+    result = play_episode("test.mp3", background=True)
+    assert result is mock_popen.return_value
+    mock_popen.assert_called_once()
+
+
+def test_play_episode_with_start_sec(monkeypatch):
+    monkeypatch.setattr("podmate.player._available_player", None)
+    monkeypatch.setattr("shutil.which", lambda p: "mpv")
+    mock_run = MagicMock()
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    play_episode("test.mp3", start_sec=30)
+    cmd = mock_run.call_args[0][0]
+    assert "--start" in cmd
+    assert "30" in cmd
+
+
+def test_build_player_command_mpv():
+    cmd = _build_player_command("mpv", "test.mp3")
+    assert cmd[0] == "mpv"
+    assert "test.mp3" in cmd
+
+
+def test_build_player_command_mpv_with_start():
+    cmd = _build_player_command("mpv", "test.mp3", start_sec=45)
+    assert "--start" in cmd
+    assert "45" in cmd
+
+
+def test_build_player_command_mplayer():
+    cmd = _build_player_command("mplayer", "test.mp3")
+    assert cmd[0] == "mplayer"
+
+
+def test_build_player_command_mplayer_with_start():
+    cmd = _build_player_command("mplayer", "test.mp3", start_sec=10)
+    assert "-ss" in cmd
+    assert "10" in cmd
+
+
+def test_build_player_command_ffplay():
+    cmd = _build_player_command("ffplay", "test.mp3")
+    assert cmd[0] == "ffplay"
+
+
+def test_build_player_command_ffplay_with_start():
+    cmd = _build_player_command("ffplay", "test.mp3", start_sec=20)
+    assert "-ss" in cmd
+    assert "20" in cmd
+
+
+def test_build_player_command_aplay():
+    cmd = _build_player_command("aplay", "test.mp3")
+    assert cmd[0] == "aplay"
+    assert "-q" in cmd
+
+
+def test_build_player_command_aplay_ignores_start():
+    """aplay does not support seeking — start_sec is ignored."""
+    cmd = _build_player_command("aplay", "test.mp3", start_sec=30)
+    assert "-ss" not in cmd
+    assert "--start" not in cmd
+
+
+def test_build_player_command_unknown():
+    cmd = _build_player_command("custom-player", "test.mp3")
+    assert cmd == ["custom-player", "test.mp3"]
+
+
+# ── downloader ─────────────────────────────────────────
+
+
+async def test_download_episode_success(tmp_path):
+    dest = tmp_path / "test.mp3"
+
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.headers = {"content-length": "20"}
+    mock_resp.aiter_bytes = MagicMock(return_value=_async_iter([b"chunk1", b"chunk2"]))
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_stream_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_client = AsyncMock()
+    mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("podmate.downloader.httpx.AsyncClient", return_value=mock_ctx):
+        result = await download_episode("https://example.com/audio.mp3", str(dest))
+
+    assert result == str(dest)
+    assert dest.read_bytes() == b"chunk1chunk2"
+
+
+async def test_download_episode_with_callback(tmp_path):
+    dest = tmp_path / "test.mp3"
+    progress_values = []
+
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.headers = {"content-length": "12"}
+    mock_resp.aiter_bytes = MagicMock(return_value=_async_iter([b"aaa", b"bbb", b"ccc"]))
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_stream_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_client = AsyncMock()
+    mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("podmate.downloader.httpx.AsyncClient", return_value=mock_ctx):
+        await download_episode(
+            "https://example.com/audio.mp3",
+            str(dest),
+            progress_callback=lambda done, total: progress_values.append((done, total)),
+        )
+
+    assert len(progress_values) == 3
+    assert progress_values[-1][0] == 9  # total bytes_written
+
+
+async def test_download_episode_http_error(tmp_path):
+    dest = tmp_path / "test.mp3"
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError(
+            "Not Found", request=MagicMock(), response=MagicMock(status_code=404)
+        )
+    )
+
+    mock_stream_ctx = MagicMock()
+    mock_stream_ctx.__aenter__ = AsyncMock(return_value=mock_resp)
+    mock_stream_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    mock_client = AsyncMock()
+    mock_client.stream = MagicMock(return_value=mock_stream_ctx)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("podmate.downloader.httpx.AsyncClient", return_value=mock_ctx),
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        await download_episode("https://example.com/audio.mp3", str(dest))
+
+
+# ── translator ─────────────────────────────────────────
+
+
+def test_translate_segments_no_api_key():
+    """translate_segments raises RuntimeError when no API key configured."""
+    segments = [{"id": 0, "start": 0.0, "end": 5.0, "text": "Hello world."}]
+    with patch("podmate.translator._get_api_key", return_value=""):
+        with pytest.raises(RuntimeError, match="未设置 DeepSeek API key"):
+            import asyncio
+
+            asyncio.run(translate_segments(segments))
+
+
+def test_translate_segments_empty():
+    """translate_segments raises ValueError when segments is empty."""
+    with patch("podmate.translator._get_api_key", return_value="sk-test"):
+        with pytest.raises(ValueError, match="转写段落为空"):
+            import asyncio
+
+            asyncio.run(translate_segments([]))
+
+
+def test_extract_translation_bracket_format():
+    """_extract_translation parses [N] text | tone: X format."""
+    content = "[0] 你好世界 | tone: calm"
+    zh, tone = _extract_translation(content, 0)
+    assert zh == "你好世界"
+    assert tone == "calm"
+
+
+def test_extract_translation_no_tone():
+    """_extract_translation returns 'default' tone when not specified."""
+    content = "[5] 翻译文本"
+    zh, tone = _extract_translation(content, 5)
+    assert zh == "翻译文本"
+    assert tone == "default"
+
+
+def test_extract_translation_dot_format():
+    """_extract_translation parses 'N.' format."""
+    content = "3. 这是翻译"
+    zh, tone = _extract_translation(content, 3)
+    assert zh == "这是翻译"
+    assert tone == "default"
+
+
+def test_extract_translation_colon_format():
+    """_extract_translation parses 'N:' format."""
+    content = "7: 译文内容 | tone: serious"
+    zh, tone = _extract_translation(content, 7)
+    assert zh == "译文内容"
+    assert tone == "serious"
+
+
+def test_extract_translation_unknown_tone_falls_back():
+    """Unknown tone value defaults to 'default'."""
+    content = "[1] 文本 | tone: angry"
+    zh, tone = _extract_translation(content, 1)
+    assert zh == "文本"
+    assert tone == "default"
+
+
+def test_extract_translation_not_found():
+    """Segment ID not in content returns empty strings."""
+    content = "[0] 第一段\n[1] 第二段"
+    zh, tone = _extract_translation(content, 99)
+    assert zh == ""
+    assert tone == "default"
+
+
+def test_parse_summary_full():
+    """_parse_summary extracts title, summary, and key points."""
+    content = "标题: 测试标题\n摘要: 这是一个测试摘要\n要点:\n- 要点1\n- 要点2"
+    result = _parse_summary(content)
+    assert result["episode_title_zh"] == "测试标题"
+    assert result["summary_zh"] == "这是一个测试摘要"
+    assert result["key_points"] == ["要点1", "要点2"]
+
+
+def test_parse_summary_chinese_colons():
+    """_parse_summary handles Chinese colons in labels."""
+    content = "标题：中文标题\n摘要：中文摘要\n要点:\n- 重点一\n- 重点二"
+    result = _parse_summary(content)
+    assert result["episode_title_zh"] == "中文标题"
+    assert result["summary_zh"] == "中文摘要"
+    assert result["key_points"] == ["重点一", "重点二"]
+
+
+def test_parse_summary_empty():
+    """_parse_summary returns empty dict for empty content."""
+    result = _parse_summary("")
+    assert result == {"summary_zh": "", "key_points": [], "episode_title_zh": ""}
+
+
+async def test_translate_segments_success(monkeypatch):
+    """translate_segments returns translated segments with mocked API."""
+    monkeypatch.setattr("podmate.translator._get_api_key", lambda: "sk-test")
+
+    segments = [
+        {"id": 0, "start": 0.0, "end": 5.0, "text": "Hello world."},
+        {"id": 1, "start": 5.0, "end": 10.0, "text": "This is a test."},
+    ]
+
+    mock_call = AsyncMock(
+        side_effect=[
+            {"content": "Tech podcast with calm tone"},
+            {"content": "[0] 你好世界 | tone: calm\n[1] 这是测试 | tone: serious"},
+            {"content": "摘要: 测试摘要\n要点:\n- 要点1\n- 要点2"},
+        ]
+    )
+
+    with patch("podmate.translator._call_deepseek", mock_call):
+        result = await translate_segments(segments, batch_size=10)
+
+    assert len(result["segments"]) == 2
+    assert result["segments"][0]["zh"] == "你好世界"
+    assert result["segments"][0]["tone"] == "calm"
+    assert result["segments"][1]["zh"] == "这是测试"
+    assert result["segments"][1]["tone"] == "serious"
+    assert result["summary_zh"] == "测试摘要"
+    assert result["key_points"] == ["要点1", "要点2"]
+
+
+# ── dubbing ────────────────────────────────────────────
+
+
+def test_get_voice_for_speaker_known():
+    assert "Yunxi" in get_voice_for_speaker("A")
+    assert "Yunyang" in get_voice_for_speaker("B")
+    assert "Xiaoxiao" in get_voice_for_speaker("C")
+    assert "Yunjian" in get_voice_for_speaker("D")
+
+
+def test_get_voice_for_speaker_unknown():
+    """Unknown speaker returns default voice."""
+    assert "Yunyang" in get_voice_for_speaker("Z")
+
+
+def test_wrap_with_tone_calm():
+    result = wrap_with_tone("你好", "calm")
+    assert '<prosody rate="-10%"' in result
+    assert "你好" in result
+    assert result.startswith("<speak")
+
+
+def test_wrap_with_tone_excited():
+    result = wrap_with_tone("太棒了", "excited")
+    assert '<prosody rate="+10%"' in result
+
+
+def test_wrap_with_tone_default():
+    result = wrap_with_tone("测试", "default")
+    assert '<prosody rate="0%"' in result
+
+
+def test_wrap_with_tone_unknown():
+    """Unknown tone falls back to default prosody."""
+    result = wrap_with_tone("文本", "unknown")
+    assert '<prosody rate="0%"' in result
+
+
+def test_majority_tone():
+    assert _majority_tone(["calm", "calm", "excited"]) == "calm"
+    assert _majority_tone(["excited", "serious", "excited", "calm"]) == "excited"
+
+
+def test_majority_tone_empty():
+    assert _majority_tone([]) == "default"
+
+
+def test_majority_tone_single():
+    assert _majority_tone(["serious"]) == "serious"
+
+
+def test_split_text_short():
+    """Text under max_chars returns as single chunk."""
+    result = _split_text("短文本。", max_chars=3000)
+    assert result == ["短文本。"]
+
+
+def test_split_text_at_sentence_boundary():
+    """Long text splits at last sentence boundary before max_chars."""
+    text = ("A" * 2900) + "。split_here" + ("B" * 500)
+    result = _split_text(text, max_chars=3000)
+    assert len(result) == 2
+    assert result[0].endswith("。")
+
+
+def test_split_text_no_boundary():
+    """When no sentence boundary found, splits at max_chars."""
+    text = "X" * 5000  # no sentence markers
+    result = _split_text(text, max_chars=3000)
+    assert len(result) == 2
+
+
+def test_concat_audio_success(tmp_path, monkeypatch):
+    """_concat_audio runs ffmpeg and cleans up temp file."""
+    out = tmp_path / "output.mp3"
+    mock_run = MagicMock(return_value=MagicMock(returncode=0))
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    _concat_audio(["a.mp3", "b.mp3"], str(out))
+    mock_run.assert_called_once()
+
+
+def test_concat_audio_failure(tmp_path, monkeypatch):
+    """_concat_audio raises RuntimeError when ffmpeg fails."""
+    out = tmp_path / "output.mp3"
+    mock_result = MagicMock(returncode=1, stderr="ffmpeg error")
+    mock_run = MagicMock(return_value=mock_result)
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    with pytest.raises(RuntimeError, match="ffmpeg 拼接失败"):
+        _concat_audio(["a.mp3"], str(out))
+
+
+def test_dub_text_empty_raises(monkeypatch, tmp_path):
+    """_dub_text processes valid input through to edge_tts."""
+    from podmate.dubbing import _dub_text
+
+    mock_comm = MagicMock()
+    mock_comm.save = AsyncMock()
+    monkeypatch.setattr("podmate.dubbing.edge_tts.Communicate", lambda *a, **kw: mock_comm)
+
+    result = _dub_text("测试文本。", str(tmp_path / "out.mp3"))
+    assert result == str(tmp_path / "out.mp3")
+    mock_comm.save.assert_called_once()
+
+
+async def test_dub_translation_single_speaker(tmp_path, monkeypatch):
+    """dub_translation with one speaker generates audio via _dub_text."""
+    out = tmp_path / "out.mp3"
+    segments = [
+        {"id": 0, "zh": "你好世界。", "speaker": "A", "tone": "calm", "start": 0.0, "end": 5.0},
+    ]
+
+    mock_comm = MagicMock()
+    mock_comm.save = AsyncMock()
+    monkeypatch.setattr("podmate.dubbing.edge_tts.Communicate", lambda *a, **kw: mock_comm)
+
+    with patch("podmate.dubbing._dub_text") as mock_dub:
+        mock_dub.return_value = str(out)
+        result = await dub_translation(segments, str(out))
+        mock_dub.assert_called_once()
+        assert result == str(out)
+
+
+async def test_dub_translation_multi_speaker(tmp_path, monkeypatch):
+    """dub_translation with multiple speakers generates per-speaker audio."""
+    out = tmp_path / "out.mp3"
+    segments = [
+        {"id": 0, "zh": "第一段。", "speaker": "A", "tone": "calm", "start": 0.0, "end": 5.0},
+        {"id": 1, "zh": "第二段。", "speaker": "B", "tone": "serious", "start": 5.0, "end": 10.0},
+    ]
+
+    mock_comm = MagicMock()
+    mock_comm.save = AsyncMock()
+    monkeypatch.setattr("podmate.dubbing.edge_tts.Communicate", lambda *a, **kw: mock_comm)
+
+    mock_run = MagicMock(return_value=MagicMock(returncode=0))
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = await dub_translation(segments, str(out))
+    assert result == str(out)
+
+
+async def test_generate_audio(tmp_path, monkeypatch):
+    """_generate_audio calls edge_tts.Communicate.save."""
+    out = tmp_path / "gen.mp3"
+    mock_comm = MagicMock()
+    mock_comm.save = AsyncMock()
+    monkeypatch.setattr("podmate.dubbing.edge_tts.Communicate", lambda *a, **kw: mock_comm)
+
+    await _generate_audio("测试文本", str(out), "zh-CN-YunyangNeural", "+0%", "+0%")
+    mock_comm.save.assert_called_once_with(str(out))
+
+
+# ── transcriber (additional) ───────────────────────────
+
+
+def test_speaker_label():
+    assert _speaker_label(0) == "A"
+    assert _speaker_label(1) == "B"
+    assert _speaker_label(25) == "Z"
+
+
+def test_parse_deepgram_response_paragraphs():
+    """_parse_deepgram_response extracts segments from paragraph data."""
+    data = {
+        "results": {
+            "channels": [
+                {
+                    "alternatives": [
+                        {
+                            "transcript": "Hello world. This is a test.",
+                            "language": "en",
+                            "duration": 10.0,
+                            "paragraphs": {
+                                "paragraphs": [
+                                    {
+                                        "speaker": 0,
+                                        "sentences": [
+                                            {"text": "Hello world.", "start": 0.0, "end": 3.0},
+                                        ],
+                                    },
+                                    {
+                                        "speaker": 1,
+                                        "sentences": [
+                                            {"text": "This is a test.", "start": 4.0, "end": 9.0},
+                                        ],
+                                    },
+                                ],
+                            },
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    result = _parse_deepgram_response(data)
+    assert result["text"] == "Hello world. This is a test."
+    assert result["language"] == "en"
+    assert result["duration_sec"] == 10.0
+    assert len(result["segments"]) == 2
+    assert result["segments"][0]["speaker"] == "A"
+    assert result["segments"][0]["text"] == "Hello world."
+    assert result["segments"][1]["speaker"] == "B"
+    assert result["segments"][1]["text"] == "This is a test."
+
+
+def test_parse_deepgram_response_words():
+    """_parse_deepgram_response falls back to word-level when no paragraphs."""
+    data = {
+        "results": {
+            "channels": [
+                {
+                    "alternatives": [
+                        {
+                            "transcript": "hello world",
+                            "language": "en",
+                            "duration": 5.0,
+                            "words": [
+                                {"word": "hello", "start": 0.0, "end": 1.0, "speaker": 0},
+                                {"word": "world", "start": 1.5, "end": 3.0, "speaker": 0},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    result = _parse_deepgram_response(data)
+    assert len(result["segments"]) == 1
+    assert result["segments"][0]["speaker"] == "A"
+    assert "hello world" in result["segments"][0]["text"]
+
+
+def test_parse_deepgram_response_words_multi_speaker():
+    """Word-level parsing splits segments on speaker change."""
+    data = {
+        "results": {
+            "channels": [
+                {
+                    "alternatives": [
+                        {
+                            "transcript": "hi there",
+                            "language": "en",
+                            "duration": 5.0,
+                            "words": [
+                                {"word": "hi", "start": 0.0, "end": 1.0, "speaker": 0},
+                                {"word": "there", "start": 1.0, "end": 2.0, "speaker": 0},
+                                {"word": "hello", "start": 3.0, "end": 4.0, "speaker": 1},
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+
+    result = _parse_deepgram_response(data)
+    assert len(result["segments"]) == 2
+    assert result["segments"][0]["speaker"] == "A"
+    assert result["segments"][1]["speaker"] == "B"
+
+
+def test_parse_deepgram_response_empty():
+    """Empty response returns empty segments."""
+    data = {"results": {"channels": [{"alternatives": [{}]}]}}
+    result = _parse_deepgram_response(data)
+    assert result["segments"] == []
+    assert result["language"] == "en"
+
+
+def test_transcribe_via_deepgram_no_api_key():
+    """transcribe_via_deepgram raises RuntimeError when API key missing."""
+    with patch("podmate.transcriber._get_deepgram_api_key", return_value=""):
+        with pytest.raises(RuntimeError, match="未设置 Deepgram API key"):
+            import asyncio
+
+            asyncio.run(transcribe_via_deepgram("test.mp3"))
+
+
+def test_transcribe_via_deepgram_file_not_found():
+    """transcribe_via_deepgram raises FileNotFoundError for missing file."""
+    with patch("podmate.transcriber._get_deepgram_api_key", return_value="test-key"):
+        with pytest.raises(FileNotFoundError, match="音频文件不存在"):
+            import asyncio
+
+            asyncio.run(transcribe_via_deepgram("/nonexistent/path.mp3"))
+
+
+async def test_transcribe_via_deepgram_success(tmp_path):
+    """transcribe_via_deepgram returns parsed result from mocked API."""
+    audio = tmp_path / "test.mp3"
+    audio.write_text("fake audio data")
+
+    mock_resp = AsyncMock()
+    mock_resp.raise_for_status = MagicMock()
+    mock_resp.json = MagicMock(
+        return_value={
+            "results": {
+                "channels": [
+                    {
+                        "alternatives": [
+                            {
+                                "transcript": "Hello world.",
+                                "language": "en",
+                                "duration": 5.0,
+                                "paragraphs": {
+                                    "paragraphs": [
+                                        {
+                                            "speaker": 0,
+                                            "sentences": [
+                                                {"text": "Hello world.", "start": 0.0, "end": 4.0},
+                                            ],
+                                        },
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+    )
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_resp)
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_ctx.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("podmate.transcriber._get_deepgram_api_key", return_value="test-key"),
+        patch("podmate.transcriber.httpx.AsyncClient", return_value=mock_ctx),
+    ):
+        result = await transcribe_via_deepgram(str(audio))
+
+    assert result["text"] == "Hello world."
+    assert result["language"] == "en"
+    assert result["duration_sec"] == 5.0
+    assert len(result["segments"]) == 1
+
+
+# ── helpers ────────────────────────────────────────────
+
+
+async def _async_iter(items):
+    """Helper to turn a list into an async iterable for mocking aiter_bytes."""
+    for item in items:
+        yield item
