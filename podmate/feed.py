@@ -34,14 +34,16 @@ async def search_itunes(keyword: str, limit: int = 10) -> list[dict[str, Any]]:
         feed_url = item.get("feedUrl")
         if not feed_url:
             continue
-        results.append({
-            "trackName": item.get("trackName", ""),
-            "artistName": item.get("artistName", ""),
-            "feedUrl": feed_url,
-            "artworkUrl100": item.get("artworkUrl100", ""),
-            "trackCount": item.get("trackCount", 0),
-            "collectionId": item.get("collectionId", 0),
-        })
+        results.append(
+            {
+                "trackName": item.get("trackName", ""),
+                "artistName": item.get("artistName", ""),
+                "feedUrl": feed_url,
+                "artworkUrl100": item.get("artworkUrl100", ""),
+                "trackCount": item.get("trackCount", 0),
+                "collectionId": item.get("collectionId", 0),
+            }
+        )
     return results
 
 
@@ -146,14 +148,16 @@ def parse_feed(url: str) -> dict[str, Any]:
         if hasattr(entry, "itunes_duration"):
             duration_sec = _parse_duration(entry.itunes_duration)
 
-        episodes.append({
-            "title": title,
-            "guid": guid,
-            "description": desc,
-            "pub_date": pub_date,
-            "audio_url": audio_url,
-            "duration_sec": duration_sec,
-        })
+        episodes.append(
+            {
+                "title": title,
+                "guid": guid,
+                "description": desc,
+                "pub_date": pub_date,
+                "audio_url": audio_url,
+                "duration_sec": duration_sec,
+            }
+        )
 
     return {
         "title": feed_meta.get("title", ""),
@@ -196,9 +200,7 @@ class PodcastIndexClient:
         签名算法：SHA1(api_key + api_secret + unix_timestamp)。
         """
         ts = str(int(time.time()))
-        auth_hash = hashlib.sha1(
-            (self.api_key + self.api_secret + ts).encode()
-        ).hexdigest()
+        auth_hash = hashlib.sha1((self.api_key + self.api_secret + ts).encode()).hexdigest()
         return {
             "X-Auth-Date": ts,
             "X-Auth-Key": self.api_key,
@@ -252,14 +254,16 @@ class PodcastIndexClient:
             duration = item.get("duration", 0)
             if isinstance(duration, str):
                 duration = _parse_duration(duration)
-            episodes.append({
-                "title": item.get("title", ""),
-                "guid": item.get("guid", ""),
-                "description": _strip_html(item.get("description", "")),
-                "pub_date": item.get("datePublishedPretty", ""),
-                "audio_url": item.get("enclosureUrl", ""),
-                "duration_sec": duration or 0,
-            })
+            episodes.append(
+                {
+                    "title": item.get("title", ""),
+                    "guid": item.get("guid", ""),
+                    "description": _strip_html(item.get("description", "")),
+                    "pub_date": item.get("datePublishedPretty", ""),
+                    "audio_url": item.get("enclosureUrl", ""),
+                    "duration_sec": duration or 0,
+                }
+            )
         return episodes
 
 
@@ -306,9 +310,7 @@ async def resolve_feed(
 
             if pi_episodes:
                 rss_guids = {ep.get("guid") for ep in rss_episodes}
-                new_from_pi = [
-                    ep for ep in pi_episodes if ep.get("guid") not in rss_guids
-                ]
+                new_from_pi = [ep for ep in pi_episodes if ep.get("guid") not in rss_guids]
                 if new_from_pi:
                     all_episodes = rss_episodes + new_from_pi
                     source = "merged"

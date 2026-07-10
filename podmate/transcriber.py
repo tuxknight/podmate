@@ -39,6 +39,7 @@ def get_model(model_size: str = _MODEL_SIZE) -> Any:
     global _model
     if _model is None:
         from faster_whisper import WhisperModel
+
         _model = WhisperModel(model_size, device="cpu", compute_type="int8")
     return _model
 
@@ -72,12 +73,14 @@ def transcribe(audio_path: str) -> dict[str, Any]:
     full_text_parts: list[str] = []
     for seg in segments:
         full_text_parts.append(seg.text)
-        result["segments"].append({
-            "id": seg.id,
-            "start": seg.start,
-            "end": seg.end,
-            "text": seg.text.strip(),
-        })
+        result["segments"].append(
+            {
+                "id": seg.id,
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text.strip(),
+            }
+        )
 
     result["text"] = " ".join(full_text_parts)
     return result
@@ -112,8 +115,7 @@ async def transcribe_via_deepgram(
     api_key = _get_deepgram_api_key()
     if not api_key:
         raise RuntimeError(
-            "未设置 Deepgram API key。\n"
-            "请运行: podmate config set deepgram.api_key 'your_key_here'"
+            "未设置 Deepgram API key。\n请运行: podmate config set deepgram.api_key 'your_key_here'"
         )
 
     if not os.path.isfile(audio_path):
@@ -196,13 +198,15 @@ def _parse_deepgram_response(data: dict[str, Any]) -> dict[str, Any]:
             para_start = sentences[0].get("start", 0)
             para_end = sentences[-1].get("end", 0)
 
-            segments.append({
-                "id": seg_id,
-                "start": para_start,
-                "end": para_end,
-                "text": para_text.strip(),
-                "speaker": speaker_label,
-            })
+            segments.append(
+                {
+                    "id": seg_id,
+                    "start": para_start,
+                    "end": para_end,
+                    "text": para_text.strip(),
+                    "speaker": speaker_label,
+                }
+            )
             seg_id += 1
     else:
         # 如果没有分段，用 words 列表粗分
@@ -218,13 +222,15 @@ def _parse_deepgram_response(data: dict[str, Any]) -> dict[str, Any]:
                 speaker = _speaker_label(word.get("speaker", 0))
                 if speaker != current_speaker and current_speaker is not None:
                     # speaker 切换 → 成段
-                    segments.append({
-                        "id": seg_id,
-                        "start": current_start,
-                        "end": current_end,
-                        "text": " ".join(current_text).strip(),
-                        "speaker": current_speaker,
-                    })
+                    segments.append(
+                        {
+                            "id": seg_id,
+                            "start": current_start,
+                            "end": current_end,
+                            "text": " ".join(current_text).strip(),
+                            "speaker": current_speaker,
+                        }
+                    )
                     seg_id += 1
                     current_text = []
                     current_start = 0.0
@@ -238,13 +244,15 @@ def _parse_deepgram_response(data: dict[str, Any]) -> dict[str, Any]:
 
             # 最后一段
             if current_text:
-                segments.append({
-                    "id": seg_id,
-                    "start": current_start,
-                    "end": current_end,
-                    "text": " ".join(current_text).strip(),
-                    "speaker": current_speaker,
-                })
+                segments.append(
+                    {
+                        "id": seg_id,
+                        "start": current_start,
+                        "end": current_end,
+                        "text": " ".join(current_text).strip(),
+                        "speaker": current_speaker,
+                    }
+                )
 
     return {
         "text": full_text.strip(),
@@ -315,8 +323,7 @@ def format_transcript(result: dict[str, Any], title: str = "") -> str:
     lines.append(f"# {display_title}")
     lines.append("")
     lines.append(
-        f"**语言:** {language} | **时长:** {duration_min} 分钟"
-        f" | **说话人:** {speaker_count}"
+        f"**语言:** {language} | **时长:** {duration_min} 分钟 | **说话人:** {speaker_count}"
     )
     lines.append("")
     lines.append("---")
@@ -344,12 +351,14 @@ def format_transcript(result: dict[str, Any], title: str = "") -> str:
             merged[-1]["text"] += " " + text
             merged[-1]["end"] = end
         else:
-            merged.append({
-                "speaker": speaker,
-                "text": text,
-                "start": start,
-                "end": end,
-            })
+            merged.append(
+                {
+                    "speaker": speaker,
+                    "text": text,
+                    "start": start,
+                    "end": end,
+                }
+            )
 
     for seg in merged:
         start_str = _format_time(seg["start"])

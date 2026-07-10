@@ -87,19 +87,21 @@ def _mock_feedparser_entry(data: dict) -> MagicMock:
 
 async def test_search_itunes_returns_feed_url_and_collection_id():
     """search_itunes returns feedUrl, collectionId, and other metadata."""
-    mock_ctx = _mock_httpx_client({
-        "resultCount": 1,
-        "results": [
-            {
-                "trackName": "The Pragmatic Engineer",
-                "artistName": "Gergely Orosz",
-                "feedUrl": "https://feeds.example.com/engineer.xml",
-                "artworkUrl100": "https://example.com/art.jpg",
-                "trackCount": 50,
-                "collectionId": 123456,
-            }
-        ],
-    })
+    mock_ctx = _mock_httpx_client(
+        {
+            "resultCount": 1,
+            "results": [
+                {
+                    "trackName": "The Pragmatic Engineer",
+                    "artistName": "Gergely Orosz",
+                    "feedUrl": "https://feeds.example.com/engineer.xml",
+                    "artworkUrl100": "https://example.com/art.jpg",
+                    "trackCount": 50,
+                    "collectionId": 123456,
+                }
+            ],
+        }
+    )
 
     with patch("podmate.feed.httpx.AsyncClient", return_value=mock_ctx):
         results = await search_itunes("The Pragmatic Engineer")
@@ -113,17 +115,19 @@ async def test_search_itunes_returns_feed_url_and_collection_id():
 
 async def test_search_itunes_skips_results_without_feed_url():
     """Results missing feedUrl are filtered out."""
-    mock_ctx = _mock_httpx_client({
-        "resultCount": 2,
-        "results": [
-            {"trackName": "No Feed", "artistName": "Someone", "feedUrl": ""},
-            {
-                "trackName": "Has Feed",
-                "artistName": "Author",
-                "feedUrl": "https://feeds.example.com/real.xml",
-            },
-        ],
-    })
+    mock_ctx = _mock_httpx_client(
+        {
+            "resultCount": 2,
+            "results": [
+                {"trackName": "No Feed", "artistName": "Someone", "feedUrl": ""},
+                {
+                    "trackName": "Has Feed",
+                    "artistName": "Author",
+                    "feedUrl": "https://feeds.example.com/real.xml",
+                },
+            ],
+        }
+    )
 
     with patch("podmate.feed.httpx.AsyncClient", return_value=mock_ctx):
         results = await search_itunes("test")
@@ -134,16 +138,18 @@ async def test_search_itunes_skips_results_without_feed_url():
 
 async def test_search_itunes_returns_collection_id_zero_when_missing():
     """collectionId defaults to 0 when not in API response."""
-    mock_ctx = _mock_httpx_client({
-        "resultCount": 1,
-        "results": [
-            {
-                "trackName": "Podcast",
-                "artistName": "Author",
-                "feedUrl": "https://example.com/feed.xml",
-            }
-        ],
-    })
+    mock_ctx = _mock_httpx_client(
+        {
+            "resultCount": 1,
+            "results": [
+                {
+                    "trackName": "Podcast",
+                    "artistName": "Author",
+                    "feedUrl": "https://example.com/feed.xml",
+                }
+            ],
+        }
+    )
 
     with patch("podmate.feed.httpx.AsyncClient", return_value=mock_ctx):
         results = await search_itunes("test")
@@ -159,22 +165,28 @@ def test_parse_feed_extracts_metadata_and_episodes():
     mock_parsed = MagicMock()
     img = MagicMock()
     img.href = "https://example.com/art.jpg"
-    mock_parsed.feed = _mock_feed_meta({
-        "title": "Test Podcast",
-        "link": "https://example.com",
-        "author": "Test Author",
-        "subtitle": "A test podcast description",
-        "image": img,
-    })
+    mock_parsed.feed = _mock_feed_meta(
+        {
+            "title": "Test Podcast",
+            "link": "https://example.com",
+            "author": "Test Author",
+            "subtitle": "A test podcast description",
+            "image": img,
+        }
+    )
 
-    mock_parsed.entries = [_mock_feedparser_entry({
-        "id": "guid-001",
-        "title": "Episode One",
-        "summary": "<p>First episode content</p>",
-        "published": "2024-01-01T00:00:00Z",
-        "itunes_duration": "30:00",
-        "enclosures": [{"href": "https://example.com/ep1.mp3", "type": "audio/mpeg"}],
-    })]
+    mock_parsed.entries = [
+        _mock_feedparser_entry(
+            {
+                "id": "guid-001",
+                "title": "Episode One",
+                "summary": "<p>First episode content</p>",
+                "published": "2024-01-01T00:00:00Z",
+                "itunes_duration": "30:00",
+                "enclosures": [{"href": "https://example.com/ep1.mp3", "type": "audio/mpeg"}],
+            }
+        )
+    ]
 
     with patch("podmate.feed.feedparser.parse", return_value=mock_parsed):
         result = parse_feed("https://example.com/feed.xml")
@@ -200,13 +212,15 @@ def test_parse_feed_handles_missing_fields():
     mock_parsed = MagicMock()
     img = MagicMock()
     img.href = ""
-    mock_parsed.feed = _mock_feed_meta({
-        "title": "Minimal Podcast",
-        "link": "",
-        "author": "",
-        "subtitle": "",
-        "image": img,
-    })
+    mock_parsed.feed = _mock_feed_meta(
+        {
+            "title": "Minimal Podcast",
+            "link": "",
+            "author": "",
+            "subtitle": "",
+            "image": img,
+        }
+    )
 
     mock_parsed.entries = [_mock_feedparser_entry({"id": "g1", "title": "Ep"})]
 
@@ -237,26 +251,28 @@ def test_podcast_index_auth_headers():
 
 async def test_podcast_index_search_by_feed_url():
     """search_by_feed_url calls correct endpoint and parses episodes."""
-    mock_ctx = _mock_httpx_client({
-        "items": [
-            {
-                "title": "Episode One",
-                "guid": "ep-001",
-                "description": "First episode",
-                "datePublishedPretty": "2024-01-01",
-                "enclosureUrl": "https://example.com/ep1.mp3",
-                "duration": 1800,
-            },
-            {
-                "title": "Episode Two",
-                "guid": "ep-002",
-                "description": "<p>Second episode</p>",
-                "datePublishedPretty": "",
-                "enclosureUrl": "",
-                "duration": 0,
-            },
-        ],
-    })
+    mock_ctx = _mock_httpx_client(
+        {
+            "items": [
+                {
+                    "title": "Episode One",
+                    "guid": "ep-001",
+                    "description": "First episode",
+                    "datePublishedPretty": "2024-01-01",
+                    "enclosureUrl": "https://example.com/ep1.mp3",
+                    "duration": 1800,
+                },
+                {
+                    "title": "Episode Two",
+                    "guid": "ep-002",
+                    "description": "<p>Second episode</p>",
+                    "datePublishedPretty": "",
+                    "enclosureUrl": "",
+                    "duration": 0,
+                },
+            ],
+        }
+    )
 
     client = PodcastIndexClient("key", "secret")
     with patch("podmate.feed.httpx.AsyncClient", return_value=mock_ctx):
@@ -272,18 +288,20 @@ async def test_podcast_index_search_by_feed_url():
 
 async def test_podcast_index_search_by_itunes_id():
     """search_by_itunes_id calls correct endpoint with id parameter."""
-    mock_ctx = _mock_httpx_client({
-        "items": [
-            {
-                "title": "ITunes Episode",
-                "guid": "it-ep-1",
-                "description": "",
-                "datePublishedPretty": "2024-06-01",
-                "enclosureUrl": "https://example.com/it-ep.mp3",
-                "duration": 3600,
-            },
-        ],
-    })
+    mock_ctx = _mock_httpx_client(
+        {
+            "items": [
+                {
+                    "title": "ITunes Episode",
+                    "guid": "it-ep-1",
+                    "description": "",
+                    "datePublishedPretty": "2024-06-01",
+                    "enclosureUrl": "https://example.com/it-ep.mp3",
+                    "duration": 3600,
+                },
+            ],
+        }
+    )
 
     client = PodcastIndexClient("key", "secret")
     with patch("podmate.feed.httpx.AsyncClient", return_value=mock_ctx):
@@ -312,13 +330,15 @@ async def test_resolve_feed_rss_only():
     mock_parsed = MagicMock()
     img = MagicMock()
     img.href = "https://example.com/img.jpg"
-    mock_parsed.feed = _mock_feed_meta({
-        "title": "RSS Podcast",
-        "link": "https://example.com",
-        "author": "RSS Author",
-        "subtitle": "RSS description",
-        "image": img,
-    })
+    mock_parsed.feed = _mock_feed_meta(
+        {
+            "title": "RSS Podcast",
+            "link": "https://example.com",
+            "author": "RSS Author",
+            "subtitle": "RSS description",
+            "image": img,
+        }
+    )
 
     mock_parsed.entries = [_mock_feedparser_entry({"id": "rss-1", "title": "RSS Ep 1"})]
 
@@ -338,30 +358,48 @@ async def test_resolve_feed_with_podcast_index_more_episodes():
     mock_parsed = MagicMock()
     img = MagicMock()
     img.href = ""
-    mock_parsed.feed = _mock_feed_meta({
-        "title": "Podcast",
-        "link": "",
-        "author": "",
-        "subtitle": "",
-        "image": img,
-    })
+    mock_parsed.feed = _mock_feed_meta(
+        {
+            "title": "Podcast",
+            "link": "",
+            "author": "",
+            "subtitle": "",
+            "image": img,
+        }
+    )
 
     mock_parsed.entries = [
         _mock_feedparser_entry({"id": "rss-1", "title": "RSS Ep"}),
         _mock_feedparser_entry({"id": "rss-only", "title": "RSS Only Ep"}),
     ]
 
-    pi_mock = _mock_httpx_client({
-        "items": [
-            {"title": "PI Ep 1", "guid": "rss-1", "description": "",
-             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
-            {"title": "PI Ep 2", "guid": "pi-2", "description": "",
-             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
-        ],
-    })
+    pi_mock = _mock_httpx_client(
+        {
+            "items": [
+                {
+                    "title": "PI Ep 1",
+                    "guid": "rss-1",
+                    "description": "",
+                    "datePublishedPretty": "",
+                    "enclosureUrl": "",
+                    "duration": 0,
+                },
+                {
+                    "title": "PI Ep 2",
+                    "guid": "pi-2",
+                    "description": "",
+                    "datePublishedPretty": "",
+                    "enclosureUrl": "",
+                    "duration": 0,
+                },
+            ],
+        }
+    )
 
-    with patch("podmate.feed.feedparser.parse", return_value=mock_parsed), \
-         patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock):
+    with (
+        patch("podmate.feed.feedparser.parse", return_value=mock_parsed),
+        patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock),
+    ):
         result = await resolve_feed(
             "https://example.com/feed.xml",
             podcast_index=client,
@@ -381,13 +419,15 @@ async def test_resolve_feed_podcast_index_fails_silently():
     mock_parsed = MagicMock()
     img = MagicMock()
     img.href = ""
-    mock_parsed.feed = _mock_feed_meta({
-        "title": "Safe Podcast",
-        "link": "",
-        "author": "",
-        "subtitle": "",
-        "image": img,
-    })
+    mock_parsed.feed = _mock_feed_meta(
+        {
+            "title": "Safe Podcast",
+            "link": "",
+            "author": "",
+            "subtitle": "",
+            "image": img,
+        }
+    )
 
     mock_parsed.entries = [_mock_feedparser_entry({"id": "rss-1", "title": "RSS Ep"})]
 
@@ -398,8 +438,10 @@ async def test_resolve_feed_podcast_index_fails_silently():
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
     mock_ctx.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("podmate.feed.feedparser.parse", return_value=mock_parsed), \
-         patch("podmate.feed.httpx.AsyncClient", return_value=mock_ctx):
+    with (
+        patch("podmate.feed.feedparser.parse", return_value=mock_parsed),
+        patch("podmate.feed.httpx.AsyncClient", return_value=mock_ctx),
+    ):
         result = await resolve_feed(
             "https://example.com/feed.xml",
             podcast_index=client,
@@ -416,27 +458,38 @@ async def test_resolve_feed_rss_has_more_than_pi():
     mock_parsed = MagicMock()
     img = MagicMock()
     img.href = ""
-    mock_parsed.feed = _mock_feed_meta({
-        "title": "Rich RSS",
-        "link": "",
-        "author": "",
-        "subtitle": "",
-        "image": img,
-    })
+    mock_parsed.feed = _mock_feed_meta(
+        {
+            "title": "Rich RSS",
+            "link": "",
+            "author": "",
+            "subtitle": "",
+            "image": img,
+        }
+    )
 
-    entries = [_mock_feedparser_entry({"id": f"rss-{i}", "title": f"RSS Ep {i}"})
-               for i in range(3)]
+    entries = [_mock_feedparser_entry({"id": f"rss-{i}", "title": f"RSS Ep {i}"}) for i in range(3)]
     mock_parsed.entries = entries
 
-    pi_mock = _mock_httpx_client({
-        "items": [
-            {"title": "PI Ep 1", "guid": "pi-1", "description": "",
-             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
-        ],
-    })
+    pi_mock = _mock_httpx_client(
+        {
+            "items": [
+                {
+                    "title": "PI Ep 1",
+                    "guid": "pi-1",
+                    "description": "",
+                    "datePublishedPretty": "",
+                    "enclosureUrl": "",
+                    "duration": 0,
+                },
+            ],
+        }
+    )
 
-    with patch("podmate.feed.feedparser.parse", return_value=mock_parsed), \
-         patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock):
+    with (
+        patch("podmate.feed.feedparser.parse", return_value=mock_parsed),
+        patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock),
+    ):
         result = await resolve_feed(
             "https://example.com/feed.xml",
             podcast_index=client,
@@ -495,10 +548,22 @@ def test_sub_stores_episode_source_in_db():
         "image_url": "",
         "link": "",
         "episodes": [
-            {"title": "E1", "guid": "e1", "description": "", "pub_date": "",
-             "audio_url": "", "duration_sec": 0},
-            {"title": "E2", "guid": "e2", "description": "", "pub_date": "",
-             "audio_url": "", "duration_sec": 0},
+            {
+                "title": "E1",
+                "guid": "e1",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+            {
+                "title": "E2",
+                "guid": "e2",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
         ],
         "episode_source": "podcast-index",
         "total_episodes": 150,
@@ -709,32 +774,56 @@ async def test_resolve_feed_always_preserves_rss_episodes():
     mock_parsed = MagicMock()
     img = MagicMock()
     img.href = ""
-    mock_parsed.feed = _mock_feed_meta({
-        "title": "Merge Test",
-        "link": "",
-        "author": "",
-        "subtitle": "",
-        "image": img,
-    })
+    mock_parsed.feed = _mock_feed_meta(
+        {
+            "title": "Merge Test",
+            "link": "",
+            "author": "",
+            "subtitle": "",
+            "image": img,
+        }
+    )
 
     mock_parsed.entries = [
         _mock_feedparser_entry({"id": "rss-exclusive-1", "title": "RSS Only 1"}),
         _mock_feedparser_entry({"id": "rss-exclusive-2", "title": "RSS Only 2"}),
     ]
 
-    pi_mock = _mock_httpx_client({
-        "items": [
-            {"title": "PI Ep 1", "guid": "pi-1", "description": "",
-             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
-            {"title": "PI Ep 2", "guid": "pi-2", "description": "",
-             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
-            {"title": "PI Ep 3", "guid": "pi-3", "description": "",
-             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
-        ],
-    })
+    pi_mock = _mock_httpx_client(
+        {
+            "items": [
+                {
+                    "title": "PI Ep 1",
+                    "guid": "pi-1",
+                    "description": "",
+                    "datePublishedPretty": "",
+                    "enclosureUrl": "",
+                    "duration": 0,
+                },
+                {
+                    "title": "PI Ep 2",
+                    "guid": "pi-2",
+                    "description": "",
+                    "datePublishedPretty": "",
+                    "enclosureUrl": "",
+                    "duration": 0,
+                },
+                {
+                    "title": "PI Ep 3",
+                    "guid": "pi-3",
+                    "description": "",
+                    "datePublishedPretty": "",
+                    "enclosureUrl": "",
+                    "duration": 0,
+                },
+            ],
+        }
+    )
 
-    with patch("podmate.feed.feedparser.parse", return_value=mock_parsed), \
-         patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock):
+    with (
+        patch("podmate.feed.feedparser.parse", return_value=mock_parsed),
+        patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock),
+    ):
         result = await resolve_feed(
             "https://example.com/feed.xml",
             podcast_index=client,
@@ -757,27 +846,39 @@ async def test_resolve_feed_all_pi_duplicates_stays_rss():
     mock_parsed = MagicMock()
     img = MagicMock()
     img.href = ""
-    mock_parsed.feed = _mock_feed_meta({
-        "title": "Dup Test",
-        "link": "",
-        "author": "",
-        "subtitle": "",
-        "image": img,
-    })
+    mock_parsed.feed = _mock_feed_meta(
+        {
+            "title": "Dup Test",
+            "link": "",
+            "author": "",
+            "subtitle": "",
+            "image": img,
+        }
+    )
 
     mock_parsed.entries = [
         _mock_feedparser_entry({"id": "shared-1", "title": "RSS Shared"}),
     ]
 
-    pi_mock = _mock_httpx_client({
-        "items": [
-            {"title": "PI Shared", "guid": "shared-1", "description": "",
-             "datePublishedPretty": "", "enclosureUrl": "", "duration": 0},
-        ],
-    })
+    pi_mock = _mock_httpx_client(
+        {
+            "items": [
+                {
+                    "title": "PI Shared",
+                    "guid": "shared-1",
+                    "description": "",
+                    "datePublishedPretty": "",
+                    "enclosureUrl": "",
+                    "duration": 0,
+                },
+            ],
+        }
+    )
 
-    with patch("podmate.feed.feedparser.parse", return_value=mock_parsed), \
-         patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock):
+    with (
+        patch("podmate.feed.feedparser.parse", return_value=mock_parsed),
+        patch("podmate.feed.httpx.AsyncClient", return_value=pi_mock),
+    ):
         result = await resolve_feed(
             "https://example.com/feed.xml",
             podcast_index=client,
@@ -821,12 +922,30 @@ def test_refresh_command_adds_new_episodes(monkeypatch):
         "image_url": "",
         "link": "",
         "episodes": [
-            {"title": "Existing Episode", "guid": "existing-ep", "description": "",
-             "pub_date": "", "audio_url": "", "duration_sec": 0},
-            {"title": "New Episode 1", "guid": "new-ep-1", "description": "",
-             "pub_date": "", "audio_url": "", "duration_sec": 0},
-            {"title": "New Episode 2", "guid": "new-ep-2", "description": "",
-             "pub_date": "", "audio_url": "", "duration_sec": 0},
+            {
+                "title": "Existing Episode",
+                "guid": "existing-ep",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+            {
+                "title": "New Episode 1",
+                "guid": "new-ep-1",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+            {
+                "title": "New Episode 2",
+                "guid": "new-ep-2",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
         ],
         "episode_source": "merged",
         "total_episodes": 3,
@@ -866,10 +985,22 @@ def test_refresh_command_preserves_existing_episodes(monkeypatch):
         "image_url": "",
         "link": "",
         "episodes": [
-            {"title": "Keep Me", "guid": "keep-1", "description": "",
-             "pub_date": "", "audio_url": "", "duration_sec": 0},
-            {"title": "New Only", "guid": "new-only", "description": "",
-             "pub_date": "", "audio_url": "", "duration_sec": 0},
+            {
+                "title": "Keep Me",
+                "guid": "keep-1",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+            {
+                "title": "New Only",
+                "guid": "new-only",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
         ],
         "episode_source": "merged",
         "total_episodes": 3,
@@ -937,12 +1068,30 @@ def test_poll_command_shows_updates():
         "image_url": "",
         "link": "",
         "episodes": [
-            {"title": "Old Episode", "guid": "old-1", "description": "",
-             "pub_date": "2024-01-01", "audio_url": "", "duration_sec": 0},
-            {"title": "New Episode 1", "guid": "new-1", "description": "",
-             "pub_date": "2024-02-01", "audio_url": "", "duration_sec": 0},
-            {"title": "New Episode 2", "guid": "new-2", "description": "",
-             "pub_date": "2024-03-01", "audio_url": "", "duration_sec": 0},
+            {
+                "title": "Old Episode",
+                "guid": "old-1",
+                "description": "",
+                "pub_date": "2024-01-01",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+            {
+                "title": "New Episode 1",
+                "guid": "new-1",
+                "description": "",
+                "pub_date": "2024-02-01",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+            {
+                "title": "New Episode 2",
+                "guid": "new-2",
+                "description": "",
+                "pub_date": "2024-03-01",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
         ],
     }
 
@@ -983,10 +1132,22 @@ def test_poll_command_dry_run():
         "image_url": "",
         "link": "",
         "episodes": [
-            {"title": "Existing Episode", "guid": "existing-1", "description": "",
-             "pub_date": "", "audio_url": "", "duration_sec": 0},
-            {"title": "Would Be New", "guid": "new-dry-1", "description": "",
-             "pub_date": "", "audio_url": "", "duration_sec": 0},
+            {
+                "title": "Existing Episode",
+                "guid": "existing-1",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+            {
+                "title": "Would Be New",
+                "guid": "new-dry-1",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
         ],
     }
 
@@ -1017,10 +1178,19 @@ def test_poll_command_error_continues():
 
     mock_good = {
         "title": "Good Feed",
-        "author": "", "description": "", "image_url": "", "link": "",
+        "author": "",
+        "description": "",
+        "image_url": "",
+        "link": "",
         "episodes": [
-            {"title": "New Good", "guid": "g-new", "description": "",
-             "pub_date": "", "audio_url": "", "duration_sec": 0},
+            {
+                "title": "New Good",
+                "guid": "g-new",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
         ],
     }
 
@@ -1082,8 +1252,20 @@ def test_format_transcript_with_speakers():
     """Multiple speakers → markdown with time ranges and speaker labels."""
     segments = [
         {"id": 0, "start": 1.0, "end": 15.0, "text": "Hello everyone.", "speaker": "A"},
-        {"id": 1, "start": 16.0, "end": 62.0, "text": "Hi there, welcome to the show.", "speaker": "B"},  # noqa: E501
-        {"id": 2, "start": 63.0, "end": 105.0, "text": "Today we discuss technology.", "speaker": "A"},  # noqa: E501
+        {
+            "id": 1,
+            "start": 16.0,
+            "end": 62.0,
+            "text": "Hi there, welcome to the show.",
+            "speaker": "B",
+        },  # noqa: E501
+        {
+            "id": 2,
+            "start": 63.0,
+            "end": 105.0,
+            "text": "Today we discuss technology.",
+            "speaker": "A",
+        },  # noqa: E501
     ]
     result = _make_result(segments, duration_sec=105.0)
 
@@ -1221,8 +1403,20 @@ def test_tone_marker_multiple():
 def test_format_transcript_with_tone_markers():
     """format_transcript applies tone markers to segment text."""
     segments = [
-        {"id": 0, "start": 0.0, "end": 15.0, "text": "Welcome to the show (applause)", "speaker": "A"},  # noqa: E501
-        {"id": 1, "start": 16.0, "end": 62.0, "text": "Thanks, that's hilarious (laughs)", "speaker": "B"},  # noqa: E501
+        {
+            "id": 0,
+            "start": 0.0,
+            "end": 15.0,
+            "text": "Welcome to the show (applause)",
+            "speaker": "A",
+        },  # noqa: E501
+        {
+            "id": 1,
+            "start": 16.0,
+            "end": 62.0,
+            "text": "Thanks, that's hilarious (laughs)",
+            "speaker": "B",
+        },  # noqa: E501
     ]
     result = _make_result(segments, duration_sec=62.0)
 
@@ -1327,8 +1521,18 @@ def test_pipeline_saves_markdown_alongside_json(tmp_path, monkeypatch):
 
     # Mock config to use tmp_path
     test_cfg = {
-        "deepgram": {"api_key": "test-key", "api_url": "https://api.example.com/v1/listen", "model": "nova-2", "diarize": True},  # noqa: E501
-        "deepseek": {"api_key": "sk-test", "api_url": "https://api.example.com/v1", "model": "test", "temperature": 0.3},  # noqa: E501
+        "deepgram": {
+            "api_key": "test-key",
+            "api_url": "https://api.example.com/v1/listen",
+            "model": "nova-2",
+            "diarize": True,
+        },  # noqa: E501
+        "deepseek": {
+            "api_key": "sk-test",
+            "api_url": "https://api.example.com/v1",
+            "model": "test",
+            "temperature": 0.3,
+        },  # noqa: E501
         "dubbing": {"voice": "test-voice", "rate": "1.0", "volume": "1.0"},
         "podcast_index": {"api_key": "", "api_secret": ""},
         "storage": {
@@ -1340,6 +1544,7 @@ def test_pipeline_saves_markdown_alongside_json(tmp_path, monkeypatch):
     monkeypatch.setattr("podmate.pipeline.DATA_DIR", str(tmp_path))
 
     import podmate.config as config_mod
+
     monkeypatch.setattr(config_mod, "_config", test_cfg)
 
     # Set up test DB
@@ -1379,17 +1584,38 @@ def test_pipeline_saves_markdown_alongside_json(tmp_path, monkeypatch):
     # Mock translation (needed since pipeline continues past transcription)
     mock_translation = {
         "segments": [
-            {"id": 0, "start": 0.0, "end": 2.0, "zh": "你好世界。", "speaker": "A", "text": "Hello world."},  # noqa: E501
-            {"id": 1, "start": 2.0, "end": 5.0, "zh": "这是一个测试。", "speaker": "B", "text": "This is a test."},  # noqa: E501
+            {
+                "id": 0,
+                "start": 0.0,
+                "end": 2.0,
+                "zh": "你好世界。",
+                "speaker": "A",
+                "text": "Hello world.",
+            },  # noqa: E501
+            {
+                "id": 1,
+                "start": 2.0,
+                "end": 5.0,
+                "zh": "这是一个测试。",
+                "speaker": "B",
+                "text": "This is a test.",
+            },  # noqa: E501
         ],
         "summary_zh": "测试摘要",
     }
 
     from podmate.pipeline import run_pipeline
 
-    with patch("podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)), \
-         patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)), \
-         patch("podmate.pipeline.dub_translation", new=AsyncMock(return_value=os.path.join(dubs_dir, "pipeline-test-guid.mp3"))):  # noqa: E501
+    with (
+        patch(
+            "podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)
+        ),
+        patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)),
+        patch(
+            "podmate.pipeline.dub_translation",
+            new=AsyncMock(return_value=os.path.join(dubs_dir, "pipeline-test-guid.mp3")),
+        ),
+    ):  # noqa: E501
         result = asyncio.run(run_pipeline(ep.id, skip_dub=False))
 
     json_path = os.path.join(transcripts_dir, "pipeline-test-guid.json")
@@ -1428,8 +1654,18 @@ def test_pipeline_exports_to_cbrain_when_dir_exists(tmp_path, monkeypatch):
     monkeypatch.setattr("podmate.pipeline.Path.home", lambda: cbrain_home)
 
     test_cfg = {
-        "deepgram": {"api_key": "test-key", "api_url": "https://api.example.com/v1/listen", "model": "nova-2", "diarize": True},  # noqa: E501
-        "deepseek": {"api_key": "sk-test", "api_url": "https://api.example.com/v1", "model": "test", "temperature": 0.3},  # noqa: E501
+        "deepgram": {
+            "api_key": "test-key",
+            "api_url": "https://api.example.com/v1/listen",
+            "model": "nova-2",
+            "diarize": True,
+        },  # noqa: E501
+        "deepseek": {
+            "api_key": "sk-test",
+            "api_url": "https://api.example.com/v1",
+            "model": "test",
+            "temperature": 0.3,
+        },  # noqa: E501
         "dubbing": {"voice": "test-voice", "rate": "1.0", "volume": "1.0"},
         "podcast_index": {"api_key": "", "api_secret": ""},
         "storage": {"data_dir": str(tmp_path), "keep_episodes": 5},
@@ -1437,6 +1673,7 @@ def test_pipeline_exports_to_cbrain_when_dir_exists(tmp_path, monkeypatch):
     monkeypatch.setattr("podmate.pipeline.DATA_DIR", str(tmp_path))
 
     import podmate.config as config_mod
+
     monkeypatch.setattr(config_mod, "_config", test_cfg)
 
     feed = add_feed(url="https://example.com/cbrain-test.xml", title="Cbrain Test")
@@ -1471,16 +1708,30 @@ def test_pipeline_exports_to_cbrain_when_dir_exists(tmp_path, monkeypatch):
 
     mock_translation = {
         "segments": [
-            {"id": 0, "start": 0.0, "end": 2.0, "zh": "你好世界。", "speaker": "A", "text": "Hello world."},  # noqa: E501
+            {
+                "id": 0,
+                "start": 0.0,
+                "end": 2.0,
+                "zh": "你好世界。",
+                "speaker": "A",
+                "text": "Hello world.",
+            },  # noqa: E501
         ],
         "summary_zh": "测试摘要",
     }
 
     from podmate.pipeline import run_pipeline
 
-    with patch("podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)), \
-         patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)), \
-         patch("podmate.pipeline.dub_translation", new=AsyncMock(return_value=os.path.join(dubs_dir, "cbrain-test-guid.mp3"))):  # noqa: E501
+    with (
+        patch(
+            "podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)
+        ),
+        patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)),
+        patch(
+            "podmate.pipeline.dub_translation",
+            new=AsyncMock(return_value=os.path.join(dubs_dir, "cbrain-test-guid.mp3")),
+        ),
+    ):  # noqa: E501
         result = asyncio.run(run_pipeline(ep.id, skip_dub=False))
 
     assert result["exported_to_cbrain"] is True
@@ -1501,8 +1752,18 @@ def test_pipeline_creates_cbrain_dir_when_missing(tmp_path, monkeypatch):
     monkeypatch.setattr("podmate.pipeline.Path.home", lambda: nonexistent_home)
 
     test_cfg = {
-        "deepgram": {"api_key": "test-key", "api_url": "https://api.example.com/v1/listen", "model": "nova-2", "diarize": True},  # noqa: E501
-        "deepseek": {"api_key": "sk-test", "api_url": "https://api.example.com/v1", "model": "test", "temperature": 0.3},  # noqa: E501
+        "deepgram": {
+            "api_key": "test-key",
+            "api_url": "https://api.example.com/v1/listen",
+            "model": "nova-2",
+            "diarize": True,
+        },  # noqa: E501
+        "deepseek": {
+            "api_key": "sk-test",
+            "api_url": "https://api.example.com/v1",
+            "model": "test",
+            "temperature": 0.3,
+        },  # noqa: E501
         "dubbing": {"voice": "test-voice", "rate": "1.0", "volume": "1.0"},
         "podcast_index": {"api_key": "", "api_secret": ""},
         "storage": {"data_dir": str(tmp_path), "keep_episodes": 5},
@@ -1510,6 +1771,7 @@ def test_pipeline_creates_cbrain_dir_when_missing(tmp_path, monkeypatch):
     monkeypatch.setattr("podmate.pipeline.DATA_DIR", str(tmp_path))
 
     import podmate.config as config_mod
+
     monkeypatch.setattr(config_mod, "_config", test_cfg)
 
     feed = add_feed(url="https://example.com/autocreate-test.xml", title="Auto Create")
@@ -1551,9 +1813,16 @@ def test_pipeline_creates_cbrain_dir_when_missing(tmp_path, monkeypatch):
 
     from podmate.pipeline import run_pipeline
 
-    with patch("podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)), \
-         patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)), \
-         patch("podmate.pipeline.dub_translation", new=AsyncMock(return_value=os.path.join(dubs_dir, "autocreate-test-guid.mp3"))):  # noqa: E501
+    with (
+        patch(
+            "podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)
+        ),
+        patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)),
+        patch(
+            "podmate.pipeline.dub_translation",
+            new=AsyncMock(return_value=os.path.join(dubs_dir, "autocreate-test-guid.mp3")),
+        ),
+    ):  # noqa: E501
         result = asyncio.run(run_pipeline(ep.id, skip_dub=False))
 
     assert result["exported_to_cbrain"] is True
@@ -1591,10 +1860,25 @@ def test_search_finds_matching_episodes(tmp_path):
     ep = add_episode(feed_id=feed.id, guid="search-ep-1", title="Search Episode")
 
     json_path = str(tmp_path / "search-ep-1.json")
-    _make_transcript_json(json_path, [
-        {"id": 0, "start": 0.0, "end": 5.0, "text": "Hello welcome to kubernetes podcast.", "speaker": "A"},  # noqa: E501
-        {"id": 1, "start": 5.0, "end": 10.0, "text": "Yes kubernetes is great for scaling apps.", "speaker": "B"},  # noqa: E501
-    ])
+    _make_transcript_json(
+        json_path,
+        [
+            {
+                "id": 0,
+                "start": 0.0,
+                "end": 5.0,
+                "text": "Hello welcome to kubernetes podcast.",
+                "speaker": "A",
+            },  # noqa: E501
+            {
+                "id": 1,
+                "start": 5.0,
+                "end": 10.0,
+                "text": "Yes kubernetes is great for scaling apps.",
+                "speaker": "B",
+            },  # noqa: E501
+        ],
+    )
     set_episode_path(ep.id, "transcript_path", json_path)
 
     result = runner.invoke(app, ["search", "kubernetes"])
@@ -1616,9 +1900,18 @@ def test_search_no_matches(tmp_path):
     ep = add_episode(feed_id=feed.id, guid="search-none-ep", title="No Match Episode")
 
     json_path = str(tmp_path / "search-none-ep.json")
-    _make_transcript_json(json_path, [
-        {"id": 0, "start": 0.0, "end": 5.0, "text": "Hello world this is a test.", "speaker": "A"},
-    ])
+    _make_transcript_json(
+        json_path,
+        [
+            {
+                "id": 0,
+                "start": 0.0,
+                "end": 5.0,
+                "text": "Hello world this is a test.",
+                "speaker": "A",
+            },
+        ],
+    )
     set_episode_path(ep.id, "transcript_path", json_path)
 
     result = runner.invoke(app, ["search", "kubernetes"])
@@ -1645,9 +1938,18 @@ def test_search_case_insensitive(tmp_path):
     ep = add_episode(feed_id=feed.id, guid="case-ep", title="Case Episode")
 
     json_path = str(tmp_path / "case-ep.json")
-    _make_transcript_json(json_path, [
-        {"id": 0, "start": 0.0, "end": 5.0, "text": "We use Kubernetes in production.", "speaker": "A"},  # noqa: E501
-    ])
+    _make_transcript_json(
+        json_path,
+        [
+            {
+                "id": 0,
+                "start": 0.0,
+                "end": 5.0,
+                "text": "We use Kubernetes in production.",
+                "speaker": "A",
+            },  # noqa: E501
+        ],
+    )
     set_episode_path(ep.id, "transcript_path", json_path)
 
     result = runner.invoke(app, ["search", "kubernetes"])
@@ -1666,12 +1968,39 @@ def test_search_limits_snippets_per_episode(tmp_path):
     ep = add_episode(feed_id=feed.id, guid="limit-ep", title="Limit Episode")
 
     json_path = str(tmp_path / "limit-ep.json")
-    _make_transcript_json(json_path, [
-        {"id": 0, "start": 10.0, "end": 15.0, "text": "First mention of kubernetes here.", "speaker": "A"},  # noqa: E501
-        {"id": 1, "start": 20.0, "end": 25.0, "text": "Second kubernetes reference in text.", "speaker": "A"},  # noqa: E501
-        {"id": 2, "start": 30.0, "end": 35.0, "text": "Third kubernetes mention right here.", "speaker": "B"},  # noqa: E501
-        {"id": 3, "start": 40.0, "end": 45.0, "text": "Fourth kubernetes mention hidden.", "speaker": "B"},  # noqa: E501
-    ])
+    _make_transcript_json(
+        json_path,
+        [
+            {
+                "id": 0,
+                "start": 10.0,
+                "end": 15.0,
+                "text": "First mention of kubernetes here.",
+                "speaker": "A",
+            },  # noqa: E501
+            {
+                "id": 1,
+                "start": 20.0,
+                "end": 25.0,
+                "text": "Second kubernetes reference in text.",
+                "speaker": "A",
+            },  # noqa: E501
+            {
+                "id": 2,
+                "start": 30.0,
+                "end": 35.0,
+                "text": "Third kubernetes mention right here.",
+                "speaker": "B",
+            },  # noqa: E501
+            {
+                "id": 3,
+                "start": 40.0,
+                "end": 45.0,
+                "text": "Fourth kubernetes mention hidden.",
+                "speaker": "B",
+            },  # noqa: E501
+        ],
+    )
     set_episode_path(ep.id, "transcript_path", json_path)
 
     result = runner.invoke(app, ["search", "kubernetes"])

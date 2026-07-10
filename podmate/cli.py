@@ -74,29 +74,29 @@ def main() -> None:
 
 @app.command()
 def discover(
-    keyword: str = typer.Argument(
-        ..., help="搜索播客关键词"
-    ),
+    keyword: str = typer.Argument(..., help="搜索播客关键词"),
 ) -> None:
     """搜索并发现播客订阅源。"""
-    with console.status(f"[bold green]🔍 正在搜索 \"{keyword}\" ...[/bold green]"):
+    with console.status(f'[bold green]🔍 正在搜索 "{keyword}" ...[/bold green]'):
         try:
             results = asyncio.run(search_itunes(keyword, limit=10))
         except Exception as e:
-            console.print(Panel(
-                f"[red]❌ 搜索失败: {e}[/red]",
-                title="错误",
-                border_style="red",
-            ))
+            console.print(
+                Panel(
+                    f"[red]❌ 搜索失败: {e}[/red]",
+                    title="错误",
+                    border_style="red",
+                )
+            )
             raise typer.Exit(code=1)
 
     if not results:
-        console.print(f"[yellow]😕 未找到与 \"{keyword}\" 相关的播客[/yellow]")
+        console.print(f'[yellow]😕 未找到与 "{keyword}" 相关的播客[/yellow]')
         console.print("[dim]提示: 尝试使用英文关键词搜索[/dim]")
         return
 
     table = Table(
-        title=f"📡 iTunes 搜索结果 — \"{keyword}\"",
+        title=f'📡 iTunes 搜索结果 — "{keyword}"',
         box=box.ROUNDED,
         header_style="bold cyan",
     )
@@ -128,13 +128,8 @@ def discover(
 
 @app.command()
 def sub(
-    url: str = typer.Argument(
-        ..., help="RSS 订阅地址或播客关键词"
-    ),
-    pick: int | None = typer.Option(
-        None, "--pick", "-p",
-        help="直接选择搜索结果中的第 N 个"
-    ),
+    url: str = typer.Argument(..., help="RSS 订阅地址或播客关键词"),
+    pick: int | None = typer.Option(None, "--pick", "-p", help="直接选择搜索结果中的第 N 个"),
 ) -> None:
     """订阅一个播客。支持 RSS URL 或关键词搜索。"""
     feed_url: str | None = None
@@ -145,19 +140,21 @@ def sub(
         feed_url = url
     else:
         # 搜索模式
-        with console.status(f"[bold green]🔍 正在搜索 \"{url}\" ...[/bold green]"):
+        with console.status(f'[bold green]🔍 正在搜索 "{url}" ...[/bold green]'):
             try:
                 results = asyncio.run(search_itunes(url, limit=10))
             except Exception as e:
-                console.print(Panel(
-                    f"[red]❌ 搜索失败: {e}[/red]",
-                    title="错误",
-                    border_style="red",
-                ))
+                console.print(
+                    Panel(
+                        f"[red]❌ 搜索失败: {e}[/red]",
+                        title="错误",
+                        border_style="red",
+                    )
+                )
                 raise typer.Exit(code=1)
 
         if not results:
-            console.print(f"[yellow]😕 未找到与 \"{url}\" 相关的播客[/yellow]")
+            console.print(f'[yellow]😕 未找到与 "{url}" 相关的播客[/yellow]')
             console.print("[dim]提示: 尝试使用英文关键词搜索[/dim]")
             raise typer.Exit(code=1)
 
@@ -196,18 +193,22 @@ def sub(
     # 解析订阅源（RSS + 可选 Podcast Index）
     with console.status(f"[bold green]📡 正在解析 {feed_url} ...[/bold green]"):
         try:
-            feed_data = asyncio.run(resolve_feed(
-                feed_url,
-                itunes_id=itunes_id,
-                podcast_index=podcast_index,
-            ))
+            feed_data = asyncio.run(
+                resolve_feed(
+                    feed_url,
+                    itunes_id=itunes_id,
+                    podcast_index=podcast_index,
+                )
+            )
         except Exception as e:
-            console.print(Panel(
-                f"[red]❌ 解析订阅源失败: {e}[/red]\n\n"
-                f"[dim]请检查 URL 是否正确: {feed_url}[/dim]",
-                title="错误",
-                border_style="red",
-            ))
+            console.print(
+                Panel(
+                    f"[red]❌ 解析订阅源失败: {e}[/red]\n\n"
+                    f"[dim]请检查 URL 是否正确: {feed_url}[/dim]",
+                    title="错误",
+                    border_style="red",
+                )
+            )
             raise typer.Exit(code=1)
 
     feed_title = feed_data.get("title", "")
@@ -231,11 +232,13 @@ def sub(
             itunes_id=itunes_id,
         )
     except Exception as e:
-        console.print(Panel(
-            f"[red]❌ 存储订阅源失败: {e}[/red]",
-            title="错误",
-            border_style="red",
-        ))
+        console.print(
+            Panel(
+                f"[red]❌ 存储订阅源失败: {e}[/red]",
+                title="错误",
+                border_style="red",
+            )
+        )
         raise typer.Exit(code=1)
 
     feed_id = feed.id
@@ -267,20 +270,21 @@ def sub(
     }
     source_label = source_labels.get(episode_source, episode_source)
     ep_list = "\n".join(
-        f"  [dim]{i+1}.[/dim] {ep.get('title', '')[:50]}"
-        for i, ep in enumerate(episodes[:5])
+        f"  [dim]{i + 1}.[/dim] {ep.get('title', '')[:50]}" for i, ep in enumerate(episodes[:5])
     )
-    console.print(Panel(
-        f"[bold green]✅ 订阅成功![/bold green]\n\n"
-        f"[bold cyan]📡 播客名称:[/bold cyan] [bold]{feed_title}[/bold]\n"
-        f"[bold cyan]✍️ 作者:[/bold cyan]      {feed_data.get('author', '-')}\n"
-        f"[bold cyan]🔗 RSS:[/bold cyan]        [dim]{feed_url}[/dim]\n"
-        f"[bold cyan]📻 剧集数:[/bold cyan]    {total_episodes} 集（来源: {source_label}）"
-        + (f"\n[bold cyan]🆔 订阅 ID:[/bold cyan]   {feed_id}" if feed_id else "")
-        + f"\n\n[bold]已记录 {added_count} 集:[/bold]\n{ep_list or '  [dim](无剧集)[/dim]'}",
-        title="podmate sub",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            f"[bold green]✅ 订阅成功![/bold green]\n\n"
+            f"[bold cyan]📡 播客名称:[/bold cyan] [bold]{feed_title}[/bold]\n"
+            f"[bold cyan]✍️ 作者:[/bold cyan]      {feed_data.get('author', '-')}\n"
+            f"[bold cyan]🔗 RSS:[/bold cyan]        [dim]{feed_url}[/dim]\n"
+            f"[bold cyan]📻 剧集数:[/bold cyan]    {total_episodes} 集（来源: {source_label}）"
+            + (f"\n[bold cyan]🆔 订阅 ID:[/bold cyan]   {feed_id}" if feed_id else "")
+            + f"\n\n[bold]已记录 {added_count} 集:[/bold]\n{ep_list or '  [dim](无剧集)[/dim]'}",
+            title="podmate sub",
+            border_style="green",
+        )
+    )
 
 
 # ── 命令：refresh ────────────────────────────────────
@@ -288,9 +292,7 @@ def sub(
 
 @app.command()
 def refresh(
-    feed_id: int = typer.Argument(
-        ..., help="要刷新的订阅 ID"
-    ),
+    feed_id: int = typer.Argument(..., help="要刷新的订阅 ID"),
 ) -> None:
     """刷新已订阅播客的剧集列表（需配置 Podcast Index API）。"""
     feed = get_feed(feed_id)
@@ -301,15 +303,17 @@ def refresh(
     pi_api_key = load_config().get("podcast_index", {}).get("api_key", "")
     pi_api_secret = load_config().get("podcast_index", {}).get("api_secret", "")
     if not pi_api_key or not pi_api_secret:
-        console.print(Panel(
-            "[yellow]⚠️ 未配置 Podcast Index API 密钥[/yellow]\n\n"
-            "[dim]请先配置 PI API 密钥以获取完整剧集列表:[/dim]\n"
-            "  [cyan]podmate config set podcast_index.api_key 'your_key'[/cyan]\n"
-            "  [cyan]podmate config set podcast_index.api_secret 'your_secret'[/cyan]\n\n"
-            "[dim]注册地址: https://podcastindex.org[/dim]",
-            title="缺少 API 密钥",
-            border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                "[yellow]⚠️ 未配置 Podcast Index API 密钥[/yellow]\n\n"
+                "[dim]请先配置 PI API 密钥以获取完整剧集列表:[/dim]\n"
+                "  [cyan]podmate config set podcast_index.api_key 'your_key'[/cyan]\n"
+                "  [cyan]podmate config set podcast_index.api_secret 'your_secret'[/cyan]\n\n"
+                "[dim]注册地址: https://podcastindex.org[/dim]",
+                title="缺少 API 密钥",
+                border_style="yellow",
+            )
+        )
         raise typer.Exit(code=1)
 
     podcast_index = PodcastIndexClient(pi_api_key, pi_api_secret)
@@ -319,17 +323,21 @@ def refresh(
 
     with console.status(f"[bold green]📡 正在刷新 {feed.title} ...[/bold green]"):
         try:
-            feed_data = asyncio.run(resolve_feed(
-                feed.url,
-                itunes_id=feed.itunes_id,
-                podcast_index=podcast_index,
-            ))
+            feed_data = asyncio.run(
+                resolve_feed(
+                    feed.url,
+                    itunes_id=feed.itunes_id,
+                    podcast_index=podcast_index,
+                )
+            )
         except Exception as e:
-            console.print(Panel(
-                f"[red]❌ 刷新失败: {e}[/red]",
-                title="错误",
-                border_style="red",
-            ))
+            console.print(
+                Panel(
+                    f"[red]❌ 刷新失败: {e}[/red]",
+                    title="错误",
+                    border_style="red",
+                )
+            )
             raise typer.Exit(code=1)
 
     episodes = feed_data.get("episodes", [])
@@ -368,15 +376,17 @@ def refresh(
     }
     source_label = source_labels.get(episode_source, episode_source)
 
-    console.print(Panel(
-        f"[bold green]✅ 刷新完成![/bold green]\n\n"
-        f"[bold cyan]📡 播客:[/bold cyan] [bold]{feed.title}[/bold]\n"
-        f"[bold cyan]📻 新增剧集:[/bold cyan] {new_count} 集\n"
-        f"[bold cyan]📻 总剧集数:[/bold cyan] {after_count} 集\n"
-        f"[bold cyan]📡 数据来源:[/bold cyan] {source_label}",
-        title=f"podmate refresh #{feed_id}",
-        border_style="green",
-    ))
+    console.print(
+        Panel(
+            f"[bold green]✅ 刷新完成![/bold green]\n\n"
+            f"[bold cyan]📡 播客:[/bold cyan] [bold]{feed.title}[/bold]\n"
+            f"[bold cyan]📻 新增剧集:[/bold cyan] {new_count} 集\n"
+            f"[bold cyan]📻 总剧集数:[/bold cyan] {after_count} 集\n"
+            f"[bold cyan]📡 数据来源:[/bold cyan] {source_label}",
+            title=f"podmate refresh #{feed_id}",
+            border_style="green",
+        )
+    )
 
 
 # ── 命令：poll ───────────────────────────────────────
@@ -385,7 +395,8 @@ def refresh(
 @app.command()
 def poll(
     dry_run: bool = typer.Option(
-        False, "--dry-run",
+        False,
+        "--dry-run",
         help="仅检查更新，不入库",
     ),
 ) -> None:
@@ -415,8 +426,7 @@ def poll(
             continue
 
         new_episodes = [
-            ep for ep in feed_data.get("episodes", [])
-            if ep.get("guid") not in existing_guids
+            ep for ep in feed_data.get("episodes", []) if ep.get("guid") not in existing_guids
         ]
 
         if new_episodes:
@@ -473,13 +483,8 @@ def poll(
 
 @app.command()
 def unsubscribe(
-    feed_id: int = typer.Argument(
-        ..., help="要取消订阅的订阅源 ID"
-    ),
-    force: bool = typer.Option(
-        False, "--force",
-        help="同时删除所有本地文件"
-    ),
+    feed_id: int = typer.Argument(..., help="要取消订阅的订阅源 ID"),
+    force: bool = typer.Option(False, "--force", help="同时删除所有本地文件"),
 ) -> None:
     """取消订阅一个播客。"""
     from .db import delete_episode, get_episodes, get_feed
@@ -490,15 +495,20 @@ def unsubscribe(
         raise typer.Exit(code=1)
 
     eps = get_episodes(feed_id=feed_id, limit=9999)
-    console.print(Panel(
-        f"[yellow]即将取消订阅: [bold]{feed.title}[/bold][/yellow]\n"
-        f"[yellow]作者: {feed.author or '-'}[/yellow]\n"
-        f"[yellow]影响 {len(eps)} 集记录[/yellow]\n\n"
-        + ("[dim]使用 --force 同时删除本地文件[/dim]" if not force
-           else "[red]将删除所有本地文件[/red]"),
-        title="📡 podmate unsubscribe",
-        border_style="yellow",
-    ))
+    console.print(
+        Panel(
+            f"[yellow]即将取消订阅: [bold]{feed.title}[/bold][/yellow]\n"
+            f"[yellow]作者: {feed.author or '-'}[/yellow]\n"
+            f"[yellow]影响 {len(eps)} 集记录[/yellow]\n\n"
+            + (
+                "[dim]使用 --force 同时删除本地文件[/dim]"
+                if not force
+                else "[red]将删除所有本地文件[/red]"
+            ),
+            title="📡 podmate unsubscribe",
+            border_style="yellow",
+        )
+    )
 
     if force:
         for ep in eps:
@@ -521,14 +531,8 @@ def unsubscribe(
 
 @app.command(name="list")
 def list_episodes(
-    feed_id: int | None = typer.Option(
-        None, "--feed", "-f",
-        help="按订阅源 ID 筛选剧集"
-    ),
-    limit: int = typer.Option(
-        20, "--limit", "-n",
-        help="最大显示数量"
-    ),
+    feed_id: int | None = typer.Option(None, "--feed", "-f", help="按订阅源 ID 筛选剧集"),
+    limit: int = typer.Option(20, "--limit", "-n", help="最大显示数量"),
 ) -> None:
     """列出已订阅播客或指定播客的剧集。"""
     if feed_id is None:
@@ -566,7 +570,7 @@ def list_episodes(
 
         episodes = get_episodes(feed_id=feed_id, limit=limit)
         if not episodes:
-            console.print(f"[dim]📭 \"{feed.title}\" 还没有剧集[/dim]")
+            console.print(f'[dim]📭 "{feed.title}" 还没有剧集[/dim]')
             return
 
         table = Table(
@@ -603,9 +607,7 @@ def list_episodes(
 
 @app.command()
 def describe(
-    feed_id: int = typer.Argument(
-        ..., help="订阅源 ID"
-    ),
+    feed_id: int = typer.Argument(..., help="订阅源 ID"),
 ) -> None:
     """查看播客详情与统计。"""
     feed = get_feed(feed_id)
@@ -668,11 +670,13 @@ def describe(
                 + f"  [dim]({_status_emoji(ep.status)})[/dim]{marks}"
             )
 
-    console.print(Panel(
-        "\n".join(lines),
-        title=f"📡 播客详情 #{feed_id}",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title=f"📡 播客详情 #{feed_id}",
+            border_style="cyan",
+        )
+    )
 
 
 # ── 命令：mark ─────────────────────────────────────────
@@ -680,21 +684,11 @@ def describe(
 
 @app.command()
 def mark(
-    episode_id: int = typer.Argument(
-        ..., help="剧集 ID"
-    ),
-    read: bool = typer.Option(
-        False, "--read", help="标记为已读"
-    ),
-    unread: bool = typer.Option(
-        False, "--unread", help="标记为未读"
-    ),
-    star: bool = typer.Option(
-        False, "--star", help="添加星标"
-    ),
-    unstar: bool = typer.Option(
-        False, "--unstar", help="取消星标"
-    ),
+    episode_id: int = typer.Argument(..., help="剧集 ID"),
+    read: bool = typer.Option(False, "--read", help="标记为已读"),
+    unread: bool = typer.Option(False, "--unread", help="标记为未读"),
+    star: bool = typer.Option(False, "--star", help="添加星标"),
+    unstar: bool = typer.Option(False, "--unstar", help="取消星标"),
 ) -> None:
     """标记剧集已读/未读或添加/取消星标。"""
     ep = get_episode(episode_id)
@@ -717,9 +711,7 @@ def mark(
         messages.append("已取消星标")
 
     if not messages:
-        console.print(
-            "[yellow]请指定标记操作: --read / --unread / --star / --unstar[/yellow]"
-        )
+        console.print("[yellow]请指定标记操作: --read / --unread / --star / --unstar[/yellow]")
         raise typer.Exit(code=1)
 
     title_short = ep.title[:40] + ("…" if len(ep.title) > 40 else "")
@@ -731,9 +723,7 @@ def mark(
 
 @app.command()
 def episode(
-    episode_id: int = typer.Argument(
-        ..., help="剧集 ID"
-    ),
+    episode_id: int = typer.Argument(..., help="剧集 ID"),
 ) -> None:
     """查看剧集详情。"""
     ep = get_episode(episode_id)
@@ -756,7 +746,10 @@ def episode(
     paths = [
         ("原声音频", ep.local_path),
         ("转写文本 (JSON)", ep.transcript_path),
-        ("转写文稿 (MD)", str(Path(ep.transcript_path).with_suffix(".md")) if ep.transcript_path else None),  # noqa: E501
+        (
+            "转写文稿 (MD)",
+            str(Path(ep.transcript_path).with_suffix(".md")) if ep.transcript_path else None,
+        ),  # noqa: E501
         ("翻译文本", ep.translation_path),
         ("配音音频", ep.dub_path),
     ]
@@ -774,11 +767,13 @@ def episode(
         lines.append("")
         lines.append(f"[red]⚠️ 错误: {ep.error_message}[/red]")
 
-    console.print(Panel(
-        "\n".join(lines),
-        title=f"📄 剧集 #{episode_id}",
-        border_style="cyan",
-    ))
+    console.print(
+        Panel(
+            "\n".join(lines),
+            title=f"📄 剧集 #{episode_id}",
+            border_style="cyan",
+        )
+    )
 
 
 # ── 命令：read ────────────────────────────────────────
@@ -786,9 +781,7 @@ def episode(
 
 @app.command()
 def read(
-    episode_id: int = typer.Argument(
-        ..., help="要阅读的剧集 ID"
-    ),
+    episode_id: int = typer.Argument(..., help="要阅读的剧集 ID"),
 ) -> None:
     """在终端分页阅读转写文字稿。"""
     ep = get_episode(episode_id)
@@ -829,36 +822,27 @@ def read(
 
 @app.command()
 def search(
-    keyword: str = typer.Argument(
-        ..., help="搜索关键词"
-    ),
+    keyword: str = typer.Argument(..., help="搜索关键词"),
 ) -> None:
     """在所有已转写剧集中搜索关键词。"""
     results = _search_transcripts(keyword)
 
     if not results:
-        console.print(f"[yellow]🔍 未找到匹配结果: \"{keyword}\"[/yellow]")
+        console.print(f'[yellow]🔍 未找到匹配结果: "{keyword}"[/yellow]')
         return
 
     total_matches = sum(r["match_count"] for r in results)
     episodes_searched = len(results)
 
     for r in results:
-        console.print(
-            f"\n[bold]📻 {r['feed_title']} → {r['episode_title']}[/bold]"
-        )
+        console.print(f"\n[bold]📻 {r['feed_title']} → {r['episode_title']}[/bold]")
         console.print(f"  [dim]→ 找到 {r['match_count']} 处匹配[/dim]\n")
 
         for m in r["snippets"]:
             time_str = _format_time(m["start"])
-            console.print(
-                f"  [说话人 {m['speaker']}] [{time_str}] {m['snippet']}"
-            )
+            console.print(f"  [说话人 {m['speaker']}] [{time_str}] {m['snippet']}")
 
-    console.print(
-        f"\n[dim]共搜索 {episodes_searched} 个剧集，"
-        f"总计 {total_matches} 处匹配[/dim]"
-    )
+    console.print(f"\n[dim]共搜索 {episodes_searched} 个剧集，总计 {total_matches} 处匹配[/dim]")
 
 
 # ── 命令：show ────────────────────────────────────────
@@ -866,9 +850,7 @@ def search(
 
 @app.command()
 def show(
-    episode_id: int = typer.Argument(
-        ..., help="剧集 ID"
-    ),
+    episode_id: int = typer.Argument(..., help="剧集 ID"),
 ) -> None:
     """查看剧集详情。"""
     ep = get_episode(episode_id)
@@ -899,12 +881,8 @@ def show(
 
 @app.command()
 def download(
-    episode_id: int = typer.Argument(
-        ..., help="要下载和处理的剧集 ID"
-    ),
-    skip_dub: bool = typer.Option(
-        False, "--skip-dub", help="跳过中文配音步骤"
-    ),
+    episode_id: int = typer.Argument(..., help="要下载和处理的剧集 ID"),
+    skip_dub: bool = typer.Option(False, "--skip-dub", help="跳过中文配音步骤"),
 ) -> None:
     """下载剧集音频，然后转写、翻译、配音。"""
     from .pipeline import run_pipeline
@@ -917,32 +895,38 @@ def download(
     console.print(f"\n[bold]🚀 启动流水线:[/bold] [cyan]{ep.title}[/cyan]\n")
 
     try:
-        result = asyncio.run(run_pipeline(
-            episode_id,
-            skip_dub=skip_dub,
-        ))
+        result = asyncio.run(
+            run_pipeline(
+                episode_id,
+                skip_dub=skip_dub,
+            )
+        )
 
         cbrain_line = "\n📚 已同步到 cbrain 知识库" if result.get("exported_to_cbrain") else ""
 
         console.print()
-        console.print(Panel(
-            f"[bold green]✅ 全部完成! 剧集 #{episode_id}[/bold green]\n\n"
-            f"[bold cyan]▶️ 播放原声:[/bold cyan]     "
-            f"[green]podmate play {episode_id}[/green]\n"
-            f"[bold cyan]🎙️ 播放配音:[/bold cyan]     "
-            f"[green]podmate play {episode_id} --dub[/green]\n"
-            f"[bold cyan]📄 查看详情:[/bold cyan]     [green]podmate show {episode_id}[/green]"
-            f"{cbrain_line}",
-            title="PodMate 处理完成",
-            border_style="green",
-        ))
+        console.print(
+            Panel(
+                f"[bold green]✅ 全部完成! 剧集 #{episode_id}[/bold green]\n\n"
+                f"[bold cyan]▶️ 播放原声:[/bold cyan]     "
+                f"[green]podmate play {episode_id}[/green]\n"
+                f"[bold cyan]🎙️ 播放配音:[/bold cyan]     "
+                f"[green]podmate play {episode_id} --dub[/green]\n"
+                f"[bold cyan]📄 查看详情:[/bold cyan]     [green]podmate show {episode_id}[/green]"
+                f"{cbrain_line}",
+                title="PodMate 处理完成",
+                border_style="green",
+            )
+        )
 
     except Exception as e:
-        console.print(Panel(
-            f"[red]❌ 处理失败: {e}[/red]",
-            title=f"剧集 #{episode_id} 错误",
-            border_style="red",
-        ))
+        console.print(
+            Panel(
+                f"[red]❌ 处理失败: {e}[/red]",
+                title=f"剧集 #{episode_id} 错误",
+                border_style="red",
+            )
+        )
         raise typer.Exit(code=1)
 
 
@@ -975,9 +959,7 @@ def export(
     if rebuild_index:
         cbrain_podcasts.mkdir(parents=True, exist_ok=True)
         _update_podcasts_index(str(cbrain_podcasts))
-        console.print(
-            f"[green]✅ 索引已重建: {cbrain_podcasts / 'index.md'}[/green]"
-        )
+        console.print(f"[green]✅ 索引已重建: {cbrain_podcasts / 'index.md'}[/green]")
         return
 
     if episode_id is None:
@@ -1018,13 +1000,8 @@ def export(
 
 @app.command()
 def play(
-    episode_id: int = typer.Argument(
-        ..., help="要播放的剧集 ID"
-    ),
-    dub: bool = typer.Option(
-        False, "--dub", "-d",
-        help="播放中文配音而非原声"
-    ),
+    episode_id: int = typer.Argument(..., help="要播放的剧集 ID"),
+    dub: bool = typer.Option(False, "--dub", "-d", help="播放中文配音而非原声"),
 ) -> None:
     """播放原声或中文配音。"""
     ep = get_episode(episode_id)
@@ -1034,26 +1011,31 @@ def play(
 
     if dub:
         from .dubbing import DUB_VOICE
+
         file_path = _get_data_path(ep.guid, "dubs")
         if not os.path.isfile(file_path):
-            console.print(Panel(
-                f"[yellow]🎙️ 中文配音还不存在，请先运行:\n"
-                f"   [cyan]podmate download {episode_id}[/cyan][/yellow]\n\n"
-                f"[dim]当前配音设置: {DUB_VOICE}[/dim]",
-                title=f"剧集 #{episode_id}",
-                border_style="yellow",
-            ))
+            console.print(
+                Panel(
+                    f"[yellow]🎙️ 中文配音还不存在，请先运行:\n"
+                    f"   [cyan]podmate download {episode_id}[/cyan][/yellow]\n\n"
+                    f"[dim]当前配音设置: {DUB_VOICE}[/dim]",
+                    title=f"剧集 #{episode_id}",
+                    border_style="yellow",
+                )
+            )
             raise typer.Exit(code=1)
         mode_label = "🎙️ 中文配音"
     else:
         file_path = _get_data_path(ep.guid, "episodes")
         if not os.path.isfile(file_path):
-            console.print(Panel(
-                f"[yellow]🔊 音频还不存在，请先运行:\n"
-                f"   [cyan]podmate download {episode_id}[/cyan][/yellow]",
-                title=f"剧集 #{episode_id}",
-                border_style="yellow",
-            ))
+            console.print(
+                Panel(
+                    f"[yellow]🔊 音频还不存在，请先运行:\n"
+                    f"   [cyan]podmate download {episode_id}[/cyan][/yellow]",
+                    title=f"剧集 #{episode_id}",
+                    border_style="yellow",
+                )
+            )
             raise typer.Exit(code=1)
         mode_label = "🔊 原声"
 
@@ -1065,17 +1047,20 @@ def play(
         console.print("[yellow]💡 安装 mpv: [cyan]sudo apt install mpv[/cyan][/yellow]")
         raise typer.Exit(code=1)
 
-    console.print(Panel(
-        f"[bold cyan]{mode_label}: {ep.title}[/bold cyan]\n"
-        f"[dim]播放器: {player}[/dim]\n"
-        f"[dim]文件: {file_path}[/dim]\n\n"
-        f"[green]▶️ 正在播放 ...[/green]\n"
-        f"[yellow]按 Ctrl+C 停止播放[/yellow]",
-        title=f"剧集 #{episode_id}",
-    ))
+    console.print(
+        Panel(
+            f"[bold cyan]{mode_label}: {ep.title}[/bold cyan]\n"
+            f"[dim]播放器: {player}[/dim]\n"
+            f"[dim]文件: {file_path}[/dim]\n\n"
+            f"[green]▶️ 正在播放 ...[/green]\n"
+            f"[yellow]按 Ctrl+C 停止播放[/yellow]",
+            title=f"剧集 #{episode_id}",
+        )
+    )
 
     try:
         from .player import play_file
+
         play_file(file_path)
     except KeyboardInterrupt:
         console.print("\n[yellow]⏹️  播放结束[/yellow]")
@@ -1089,14 +1074,8 @@ def play(
 
 @app.command()
 def clean(
-    keep: int = typer.Option(
-        5, "--keep", "-k",
-        help="保留最近几集（按 ID 倒序）"
-    ),
-    force: bool = typer.Option(
-        False, "--force",
-        help="直接清理，不确认"
-    ),
+    keep: int = typer.Option(5, "--keep", "-k", help="保留最近几集（按 ID 倒序）"),
+    force: bool = typer.Option(False, "--force", help="直接清理，不确认"),
 ) -> None:
     """清理旧剧集以释放空间。"""
     episodes = get_episodes(limit=9999)
@@ -1116,14 +1095,16 @@ def clean(
 
     if not force:
         size_mb = total_bytes / 1024 / 1024
-        console.print(Panel(
-            f"[yellow]即将清理 [bold]{len(to_delete)}[/bold] 集旧剧集[/yellow]\n"
-            f"[yellow]释放空间: [bold]{size_mb:.1f} MB[/bold][/yellow]\n"
-            f"[yellow]保留: [bold]{keep}[/bold] 集最新剧集[/yellow]\n\n"
-            f"[dim]使用 [cyan]podmate clean --force[/cyan] 确认清理[/dim]",
-            title="🧹 podmate clean",
-            border_style="yellow",
-        ))
+        console.print(
+            Panel(
+                f"[yellow]即将清理 [bold]{len(to_delete)}[/bold] 集旧剧集[/yellow]\n"
+                f"[yellow]释放空间: [bold]{size_mb:.1f} MB[/bold][/yellow]\n"
+                f"[yellow]保留: [bold]{keep}[/bold] 集最新剧集[/yellow]\n\n"
+                f"[dim]使用 [cyan]podmate clean --force[/cyan] 确认清理[/dim]",
+                title="🧹 podmate clean",
+                border_style="yellow",
+            )
+        )
         return
 
     deleted_count = 0
@@ -1357,19 +1338,23 @@ def _search_transcripts(keyword: str) -> list[dict]:
                 if end_idx < len(text):
                     snippet = snippet + "..."
 
-                snippets.append({
-                    "speaker": seg.get("speaker", "?"),
-                    "start": seg.get("start", 0),
-                    "snippet": snippet,
-                })
+                snippets.append(
+                    {
+                        "speaker": seg.get("speaker", "?"),
+                        "start": seg.get("start", 0),
+                        "snippet": snippet,
+                    }
+                )
 
         if match_count > 0:
-            results.append({
-                "feed_title": ep.feed_title or "Unknown",
-                "episode_title": ep.title,
-                "match_count": match_count,
-                "snippets": snippets,
-            })
+            results.append(
+                {
+                    "feed_title": ep.feed_title or "Unknown",
+                    "episode_title": ep.title,
+                    "match_count": match_count,
+                    "snippets": snippets,
+                }
+            )
 
     results.sort(key=lambda r: r["match_count"], reverse=True)
     return results
@@ -1378,7 +1363,7 @@ def _search_transcripts(keyword: str) -> list[dict]:
 def _show_search_table(keyword: str, results: list) -> None:
     """显示 iTunes 搜索结果表格。"""
     table = Table(
-        title=f"📡 iTunes 搜索结果 — \"{keyword}\"",
+        title=f'📡 iTunes 搜索结果 — "{keyword}"',
         box=box.ROUNDED,
         header_style="bold cyan",
     )

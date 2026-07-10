@@ -24,23 +24,24 @@ def _get_dub_rate() -> str:
 def _get_dub_volume() -> str:
     return config_get("dubbing", "volume", "+0%")
 
+
 _MAX_CHUNK_CHARS = 3000  # edge-tts max chars per call
 
 SPEAKER_VOICE_MAP = {
-    "A": "zh-CN-YunxiNeural",      # 云希，年轻男声，适合主持/采访者
-    "B": "zh-CN-YunyangNeural",     # 云扬，沉稳男声，适合被访者/专家
-    "C": "zh-CN-XiaoxiaoNeural",    # 晓晓，温柔女声
-    "D": "zh-CN-YunjianNeural",     # 云健，活力男声
+    "A": "zh-CN-YunxiNeural",  # 云希，年轻男声，适合主持/采访者
+    "B": "zh-CN-YunyangNeural",  # 云扬，沉稳男声，适合被访者/专家
+    "C": "zh-CN-XiaoxiaoNeural",  # 晓晓，温柔女声
+    "D": "zh-CN-YunjianNeural",  # 云健，活力男声
 }
 
 DUB_VOICE = "多人声线模式 (A=云希 B=云扬 C=晓晓 D=云健)"
 
 TONE_SSML_MAP = {
-    "calm":     '<prosody rate="-10%" pitch="-5%">{text}</prosody>',
-    "excited":  '<prosody rate="+10%" pitch="+10%">{text}</prosody>',
-    "serious":  '<prosody rate="-5%" pitch="0%">{text}</prosody>',
-    "casual":   '<prosody rate="+5%" pitch="+5%">{text}</prosody>',
-    "default":  '<prosody rate="0%" pitch="0%">{text}</prosody>',
+    "calm": '<prosody rate="-10%" pitch="-5%">{text}</prosody>',
+    "excited": '<prosody rate="+10%" pitch="+10%">{text}</prosody>',
+    "serious": '<prosody rate="-5%" pitch="0%">{text}</prosody>',
+    "casual": '<prosody rate="+5%" pitch="+5%">{text}</prosody>',
+    "default": '<prosody rate="0%" pitch="0%">{text}</prosody>',
 }
 
 
@@ -59,6 +60,7 @@ def wrap_with_tone(text: str, tone: str = "default") -> str:
 def _majority_tone(tones: list[str]) -> str:
     """Return the most common tone from a list."""
     from collections import Counter
+
     if not tones:
         return "default"
     return Counter(tones).most_common(1)[0][0]
@@ -276,15 +278,25 @@ def _concat_audio(input_files: list[str], output_path: str) -> None:
                 f.write(f"file '{inp}'\n")
 
         result = subprocess.run(
-            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
-             "-i", list_path, "-c", "copy", output_path],
-            capture_output=True, text=True, timeout=120,
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                list_path,
+                "-c",
+                "copy",
+                output_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0:
-            raise RuntimeError(
-                f"ffmpeg 拼接失败 (code={result.returncode}): "
-                f"{result.stderr[:200]}"
-            )
+            raise RuntimeError(f"ffmpeg 拼接失败 (code={result.returncode}): {result.stderr[:200]}")
     finally:
         try:
             os.remove(list_path)

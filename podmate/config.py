@@ -106,7 +106,7 @@ def _write(path: Path, cfg: dict) -> None:
         lines.append(f"\n[{section}]")
         for k, v in values.items():
             if isinstance(v, bool):
-                lines.append(f'{k} = {"true" if v else "false"}')
+                lines.append(f"{k} = {'true' if v else 'false'}")
             elif isinstance(v, (int, float)):
                 lines.append(f"{k} = {v}")
             else:

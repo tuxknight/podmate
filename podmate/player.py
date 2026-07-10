@@ -54,16 +54,12 @@ def play_file(
         player = get_available_player()
 
     if player is None:
-        raise RuntimeError(
-            "未找到可用的播放器。请安装 mpv: sudo apt install mpv"
-        )
+        raise RuntimeError("未找到可用的播放器。请安装 mpv: sudo apt install mpv")
 
     cmd = _build_player_command(player, file_path)
 
     if background:
-        return subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         subprocess.run(cmd, check=True)
         return None
@@ -93,9 +89,7 @@ def play_episode(
     cmd = _build_player_command(player, file_path, start_sec=start_sec)
 
     if background:
-        return subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     else:
         subprocess.run(cmd, check=True)
         return None
@@ -104,9 +98,7 @@ def play_episode(
 # ── 内部函数 ────────────────────────────────────────
 
 
-def _build_player_command(
-    player: str, file_path: str, start_sec: int = 0
-) -> list[str]:
+def _build_player_command(player: str, file_path: str, start_sec: int = 0) -> list[str]:
     """根据播放器构建命令。"""
     if player == "mpv":
         cmd = ["mpv", "--no-terminal", "--quiet"]

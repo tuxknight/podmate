@@ -18,6 +18,7 @@ def _get_api_key() -> str:
 def _get_api_url() -> str:
     return config_get("deepseek", "api_url", "https://api.deepseek.com/v1/chat/completions")
 
+
 _BATCH_SIZE = 20  # 每批处理的段落数
 _MAX_RETRIES = 3  # API 调用最大重试次数
 _RETRY_DELAY = 2  # 重试等待秒数
@@ -53,8 +54,7 @@ async def translate_segments(
     api_key = _get_api_key()
     if not api_key:
         raise RuntimeError(
-            "未设置 DeepSeek API key。\n"
-            "请运行: podmate config set deepseek.api_key 'your_key_here'"
+            "未设置 DeepSeek API key。\n请运行: podmate config set deepseek.api_key 'your_key_here'"
         )
 
     if not segments:
@@ -66,10 +66,8 @@ async def translate_segments(
 
     # 先分析整体风格和话题（用第一批作为样本）
     tone_analysis = ""
-    first_batch = segments[:min(batch_size, len(segments))]
-    first_text = "\n".join(
-        f"[{s['id']}] {s['text']}" for s in first_batch
-    )
+    first_batch = segments[: min(batch_size, len(segments))]
+    first_text = "\n".join(f"[{s['id']}] {s['text']}" for s in first_batch)
 
     analysis_prompt = (
         "As a professional podcast analyst, analyze the following transcript excerpt.\n"
@@ -83,7 +81,8 @@ async def translate_segments(
     )
 
     analysis_result = await _call_deepseek(
-        analysis_prompt, system_role="你是一个播客分析专家。用中文简洁回复。",
+        analysis_prompt,
+        system_role="你是一个播客分析专家。用中文简洁回复。",
     )
     tone_analysis = analysis_result.get("content", "")
 
@@ -93,9 +92,7 @@ async def translate_segments(
         end_idx = min(start_idx + batch_size, len(segments))
         batch = segments[start_idx:end_idx]
 
-        batch_text = "\n".join(
-            f"[{s['id']}] {s['text']}" for s in batch
-        )
+        batch_text = "\n".join(f"[{s['id']}] {s['text']}" for s in batch)
 
         # 带上 tone_analysis 保持风格一致
         system_msg = (
@@ -123,15 +120,17 @@ async def translate_segments(
         for s in batch:
             seg_id = s["id"]
             zh_text, tone = _extract_translation(content, seg_id)
-            translated_segments.append({
-                "id": seg_id,
-                "start": s.get("start", 0.0),
-                "end": s.get("end", 0.0),
-                "text": s.get("text", ""),
-                "speaker": s.get("speaker", ""),
-                "zh": zh_text,
-                "tone": tone,
-            })
+            translated_segments.append(
+                {
+                    "id": seg_id,
+                    "start": s.get("start", 0.0),
+                    "end": s.get("end", 0.0),
+                    "text": s.get("text", ""),
+                    "speaker": s.get("speaker", ""),
+                    "zh": zh_text,
+                    "tone": tone,
+                }
+            )
 
         # 更新进度
         if episode_id is not None:
@@ -143,9 +142,7 @@ async def translate_segments(
             await asyncio.sleep(0.5)
 
     # 生成摘要
-    summary_data = await _generate_summary_from_batches(
-        translated_segments, tone_analysis
-    )
+    summary_data = await _generate_summary_from_batches(translated_segments, tone_analysis)
 
     return {
         "summary_zh": summary_data.get("summary_zh", ""),
@@ -172,9 +169,7 @@ async def generate_summary(
     if full_text:
         sample = full_text[:5000]
     else:
-        sample = "\n".join(
-            s.get("zh", "") for s in translated_segments if s.get("zh")
-        )[:5000]
+        sample = "\n".join(s.get("zh", "") for s in translated_segments if s.get("zh"))[:5000]
 
     prompt = (
         "你是一个播客内容分析专家。阅读以下中文翻译稿，生成：\n\n"
@@ -191,10 +186,7 @@ async def generate_summary(
         "- 要点3\n"
     )
 
-    result = await _call_deepseek(
-        prompt,
-        system_role="你是一个播客内容分析专家。用中文回复。"
-    )
+    result = await _call_deepseek(prompt, system_role="你是一个播客内容分析专家。用中文回复。")
 
     content = result.get("content", "")
     return _parse_summary(content)
@@ -261,7 +253,7 @@ async def _call_deepseek(
             last_error = e
             if e.response.status_code == 429:
                 # 限流，重试
-                wait = _RETRY_DELAY * (2 ** attempt)
+                wait = _RETRY_DELAY * (2**attempt)
                 await asyncio.sleep(wait)
                 continue
             elif e.response.status_code in (400, 401, 403):
@@ -277,7 +269,7 @@ async def _call_deepseek(
         except (httpx.RequestError, httpx.TimeoutException) as e:
             last_error = e
             if attempt < _MAX_RETRIES - 1:
-                await asyncio.sleep(_RETRY_DELAY * (2 ** attempt))
+                await asyncio.sleep(_RETRY_DELAY * (2**attempt))
                 continue
         except (KeyError, json.JSONDecodeError) as e:
             last_error = e
@@ -285,9 +277,7 @@ async def _call_deepseek(
                 await asyncio.sleep(_RETRY_DELAY)
                 continue
 
-    raise RuntimeError(
-        f"DeepSeek API 调用失败（已重试 {_MAX_RETRIES} 次）: {last_error}"
-    )
+    raise RuntimeError(f"DeepSeek API 调用失败（已重试 {_MAX_RETRIES} 次）: {last_error}")
 
 
 # ── 辅助函数 ────────────────────────────────────────
@@ -315,7 +305,7 @@ def _extract_translation(content: str, seg_id: int) -> tuple[str, str]:
             prefix = f"{seg_id}:"
 
         if prefix is not None:
-            text = line[len(prefix):].strip()
+            text = line[len(prefix) :].strip()
 
         if text is not None:
             tone = "default"
@@ -347,15 +337,17 @@ def _parse_summary(content: str) -> dict[str, Any]:
 
         # 标题
         if line.startswith("标题:"):
-            result["episode_title_zh"] = line[len("标题:"):].strip()
-        elif line.startswith("标题：", ):
-            result["episode_title_zh"] = line[len("标题："):].strip()
+            result["episode_title_zh"] = line[len("标题:") :].strip()
+        elif line.startswith(
+            "标题：",
+        ):
+            result["episode_title_zh"] = line[len("标题：") :].strip()
 
         # 摘要
         elif line.startswith("摘要:"):
-            result["summary_zh"] = line[len("摘要:"):].strip()
+            result["summary_zh"] = line[len("摘要:") :].strip()
         elif line.startswith("摘要："):
-            result["summary_zh"] = line[len("摘要："):].strip()
+            result["summary_zh"] = line[len("摘要：") :].strip()
 
         # 要点
         elif line.startswith("- "):
@@ -370,24 +362,20 @@ async def _generate_summary_from_batches(
     tone_analysis: str,
 ) -> dict[str, Any]:
     """基于所有翻译段落生成摘要。"""
-    sample_text = "\n".join(
-        s.get("zh", "") for s in translated_segments if s.get("zh")
-    )
+    sample_text = "\n".join(s.get("zh", "") for s in translated_segments if s.get("zh"))
 
     # 取前中后各一部分作为摘要依据
     total = len(translated_segments)
     if total > 60:
         parts = [
             translated_segments[:20],
-            translated_segments[total // 2 - 10:total // 2 + 10],
+            translated_segments[total // 2 - 10 : total // 2 + 10],
             translated_segments[-20:],
         ]
         sample_parts = []
         for p in parts:
             sample_parts.extend(p)
-        sample_text = "\n".join(
-            s.get("zh", "") for s in sample_parts if s.get("zh")
-        )
+        sample_text = "\n".join(s.get("zh", "") for s in sample_parts if s.get("zh"))
 
     if len(sample_text) > 6000:
         sample_text = sample_text[:6000]
@@ -406,8 +394,7 @@ async def _generate_summary_from_batches(
     )
 
     result = await _call_deepseek(
-        prompt,
-        system_role="你是一个播客分析专家。用中文回复，简洁有力。"
+        prompt, system_role="你是一个播客分析专家。用中文回复，简洁有力。"
     )
 
     return _parse_summary(result.get("content", ""))

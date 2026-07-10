@@ -203,7 +203,8 @@ async def run_pipeline(
 
     except Exception as e:
         update_episode_status(
-            episode_id, "error",
+            episode_id,
+            "error",
             progress=0.0,
             error_message=str(e),
         )

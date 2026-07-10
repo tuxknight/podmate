@@ -79,21 +79,23 @@ def init_db() -> None:
 
     # 为 episodes.guid 添加 UNIQUE 约束（替换旧的非唯一索引）
     conn.execute("DROP INDEX IF EXISTS idx_episodes_guid")
-    conn.execute(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_guid_unique ON episodes(guid)"
-    )
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_guid_unique ON episodes(guid)")
     conn.commit()
 
 
 # ── Feeds ──────────────────────────────────────────────
 
 
-def add_feed(url: str, title: str, author: str | None = None,
-             description: str | None = None,
-             image_url: str | None = None,
-             episode_source: str = "rss",
-             total_episodes: int = 0,
-             itunes_id: int | None = None) -> Feed:
+def add_feed(
+    url: str,
+    title: str,
+    author: str | None = None,
+    description: str | None = None,
+    image_url: str | None = None,
+    episode_source: str = "rss",
+    total_episodes: int = 0,
+    itunes_id: int | None = None,
+) -> Feed:
     """添加订阅源。如果 URL 已存在则忽略。"""
     conn = get_connection()
     conn.execute(
@@ -101,8 +103,7 @@ def add_feed(url: str, title: str, author: str | None = None,
                (url, title, author, description, image_url,
                 episode_source, total_episodes, itunes_id)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (url, title, author, description, image_url,
-         episode_source, total_episodes, itunes_id),
+        (url, title, author, description, image_url, episode_source, total_episodes, itunes_id),
     )
     conn.commit()
     return get_feed_by_url(url)
@@ -152,11 +153,15 @@ def delete_feed(feed_id: int) -> bool:
 # ── Episodes ───────────────────────────────────────────
 
 
-def add_episode(feed_id: int, guid: str, title: str,
-                description: str | None = None,
-                pub_date: str | None = None,
-                audio_url: str | None = None,
-                duration_sec: int | None = None) -> Episode:
+def add_episode(
+    feed_id: int,
+    guid: str,
+    title: str,
+    description: str | None = None,
+    pub_date: str | None = None,
+    audio_url: str | None = None,
+    duration_sec: int | None = None,
+) -> Episode:
     """添加剧集。如果 guid 已存在则忽略。"""
     conn = get_connection()
     conn.execute(
@@ -173,8 +178,9 @@ def add_episode(feed_id: int, guid: str, title: str,
     return _row_to_episode(row)
 
 
-def get_episodes(feed_id: int | None = None, status: str | None = None,
-                 limit: int = 20, offset: int = 0) -> list[Episode]:
+def get_episodes(
+    feed_id: int | None = None, status: str | None = None, limit: int = 20, offset: int = 0
+) -> list[Episode]:
     """列出剧集，可选按订阅源/状态筛选。"""
     conn = get_connection()
     conditions: list[str] = []
@@ -212,9 +218,9 @@ def get_episode(episode_id: int) -> Episode | None:
     return _row_to_episode(row) if row else None
 
 
-def update_episode_status(episode_id: int, status: str,
-                          progress: float | None = None,
-                          error_message: str | None = None) -> None:
+def update_episode_status(
+    episode_id: int, status: str, progress: float | None = None, error_message: str | None = None
+) -> None:
     """更新剧集状态。"""
     conn = get_connection()
     sets = ["status = ?"]
@@ -226,9 +232,7 @@ def update_episode_status(episode_id: int, status: str,
         sets.append("error_message = ?")
         params.append(error_message)
     params.append(episode_id)
-    conn.execute(
-        f"UPDATE episodes SET {', '.join(sets)} WHERE id = ?", params
-    )
+    conn.execute(f"UPDATE episodes SET {', '.join(sets)} WHERE id = ?", params)
     conn.commit()
 
 
@@ -365,7 +369,10 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
 
 
 def _add_column_if_missing(
-    conn: sqlite3.Connection, table: str, column: str, col_type: str,
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    col_type: str,
 ) -> None:
     """安全地添加列（如果不存在）。"""
     cursor = conn.execute(f"PRAGMA table_info({table})")
