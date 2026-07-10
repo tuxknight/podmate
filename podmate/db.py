@@ -74,6 +74,8 @@ def init_db() -> None:
     _add_column_if_missing(conn, "feeds", "episode_source", "TEXT DEFAULT 'rss'")
     _add_column_if_missing(conn, "feeds", "total_episodes", "INTEGER DEFAULT 0")
     _add_column_if_missing(conn, "feeds", "itunes_id", "INTEGER")
+    _add_column_if_missing(conn, "episodes", "is_read", "INTEGER DEFAULT 0")
+    _add_column_if_missing(conn, "episodes", "is_starred", "INTEGER DEFAULT 0")
 
     # 为 episodes.guid 添加 UNIQUE 约束（替换旧的非唯一索引）
     conn.execute("DROP INDEX IF EXISTS idx_episodes_guid")
@@ -268,6 +270,26 @@ def delete_episode(episode_id: int) -> bool:
     return cur.rowcount > 0
 
 
+def mark_episode_read(episode_id: int, read: bool = True) -> None:
+    """标记剧集为已读或未读。"""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE episodes SET is_read = ? WHERE id = ?",
+        (1 if read else 0, episode_id),
+    )
+    conn.commit()
+
+
+def mark_episode_starred(episode_id: int, starred: bool = True) -> None:
+    """添加或取消星标。"""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE episodes SET is_starred = ? WHERE id = ?",
+        (1 if starred else 0, episode_id),
+    )
+    conn.commit()
+
+
 # ── Stats ──────────────────────────────────────────────
 
 
@@ -337,6 +359,8 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         error_message=row["error_message"],
         created_at=row["created_at"],
         feed_title=feed_title,
+        is_read=bool(row["is_read"]) if "is_read" in keys else False,
+        is_starred=bool(row["is_starred"]) if "is_starred" in keys else False,
     )
 
 

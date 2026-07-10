@@ -29,6 +29,8 @@ from .db import (
     get_feed,
     get_feeds,
     init_db,
+    mark_episode_read,
+    mark_episode_starred,
 )
 from .feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
 from .transcriber import _format_time
@@ -576,14 +578,21 @@ def list_episodes(
         table.add_column("日期")
         table.add_column("时长")
         table.add_column("状态")
+        table.add_column("标记")
 
         for ep in episodes:
+            marks = []
+            if not ep.is_read:
+                marks.append("📖")
+            if ep.is_starred:
+                marks.append("⭐")
             table.add_row(
                 str(ep.id),
                 ep.title[:50] + ("…" if len(ep.title) > 50 else ""),
                 ep.pub_date or "-",
                 _format_duration(ep.duration_sec) if ep.duration_sec else "-",
                 _status_emoji(ep.status),
+                " ".join(marks),
             )
         console.print(table)
 
@@ -647,10 +656,15 @@ def describe(
         lines.append("")
         lines.append("[bold]📻 最近剧集:[/bold]")
         for i, ep in enumerate(recent, start=1):
+            marks = ""
+            if not ep.is_read:
+                marks += " 📖"
+            if ep.is_starred:
+                marks += " ⭐"
             lines.append(
                 f"  [dim]{i}.[/dim] {ep.title[:50]}"
                 + ("…" if len(ep.title) > 50 else "")
-                + f"  [dim]({_status_emoji(ep.status)})[/dim]"
+                + f"  [dim]({_status_emoji(ep.status)})[/dim]{marks}"
             )
 
     console.print(Panel(
@@ -658,6 +672,57 @@ def describe(
         title=f"📡 播客详情 #{feed_id}",
         border_style="cyan",
     ))
+
+
+# ── 命令：mark ─────────────────────────────────────────
+
+
+@app.command()
+def mark(
+    episode_id: int = typer.Argument(
+        ..., help="剧集 ID"
+    ),
+    read: bool = typer.Option(
+        False, "--read", help="标记为已读"
+    ),
+    unread: bool = typer.Option(
+        False, "--unread", help="标记为未读"
+    ),
+    star: bool = typer.Option(
+        False, "--star", help="添加星标"
+    ),
+    unstar: bool = typer.Option(
+        False, "--unstar", help="取消星标"
+    ),
+) -> None:
+    """标记剧集已读/未读或添加/取消星标。"""
+    ep = get_episode(episode_id)
+    if not ep:
+        console.print(f"[red]❌ 未找到剧集 ID: {episode_id}[/red]")
+        raise typer.Exit(code=1)
+
+    messages: list[str] = []
+    if read:
+        mark_episode_read(episode_id, True)
+        messages.append("已标记为已读")
+    if unread:
+        mark_episode_read(episode_id, False)
+        messages.append("已标记为未读")
+    if star:
+        mark_episode_starred(episode_id, True)
+        messages.append("已添加星标")
+    if unstar:
+        mark_episode_starred(episode_id, False)
+        messages.append("已取消星标")
+
+    if not messages:
+        console.print(
+            "[yellow]请指定标记操作: --read / --unread / --star / --unstar[/yellow]"
+        )
+        raise typer.Exit(code=1)
+
+    title_short = ep.title[:40] + ("…" if len(ep.title) > 40 else "")
+    console.print(f"✅ 剧集《{title_short}》{'，'.join(messages)}")
 
 
 # ── 命令：episode ────────────────────────────────────
@@ -683,6 +748,8 @@ def episode(
         f"[dim]时长:[/dim] {_format_duration(ep.duration_sec) if ep.duration_sec else '-'}",
         f"[dim]状态:[/dim] {_status_label(ep.status)}",
         f"[dim]进度:[/dim] {ep.progress * 100:.0f}%",
+        f"[dim]阅读状态:[/dim] {'✅ 已读' if ep.is_read else '📖 未读'}",
+        f"[dim]星标:[/dim] {'⭐ 是' if ep.is_starred else '否'}",
     ]
 
     paths = [
@@ -818,6 +885,8 @@ def show(
             f"[dim]时长:[/dim] {_format_duration(ep.duration_sec) if ep.duration_sec else '-'}\n"
             f"[dim]本地文件:[/dim] {ep.local_path or '-'}\n"
             f"[dim]进度:[/dim] {ep.progress * 100:.0f}%\n"
+            f"[dim]阅读状态:[/dim] {'✅ 已读' if ep.is_read else '📖 未读'}\n"
+            f"[dim]星标:[/dim] {'⭐ 是' if ep.is_starred else '否'}\n"
             f"[dim]错误信息:[/dim] {ep.error_message or '无'}",
             title=f"📄 剧集 #{episode_id}",
         )

@@ -41,5 +41,7 @@ class Episode:
     progress: float = 0.0  # 0.0–1.0
     error_message: str | None = None
     created_at: str = ""
+    is_read: bool = False
+    is_starred: bool = False
     # computed via JOIN
     feed_title: str | None = None

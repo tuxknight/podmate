@@ -10,7 +10,15 @@ from typer.testing import CliRunner
 
 from podmate.cli import app
 from podmate.config import load as load_config
-from podmate.db import add_episode, add_feed, get_episodes, get_feed, get_feeds, set_episode_path
+from podmate.db import (
+    add_episode,
+    add_feed,
+    get_episode,
+    get_episodes,
+    get_feed,
+    get_feeds,
+    set_episode_path,
+)
 from podmate.feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
 from podmate.transcriber import _format_time, format_transcript
 
@@ -1586,3 +1594,132 @@ def test_search_limits_snippets_per_episode(tmp_path):
     assert "Third kubernetes mention" in result.stdout
     assert "Fourth kubernetes mention" not in result.stdout
     assert "总计 4 处匹配" in result.stdout
+
+
+# ── CLI: mark command ──────────────────────────────────────
+
+
+def test_mark_read():
+    """Marking an episode as read sets is_read=True."""
+    feed = add_feed(url="https://example.com/mark-read.xml", title="Mark Read")
+    ep = add_episode(feed_id=feed.id, guid="mark-read-ep", title="Mark Read Episode")
+
+    result = runner.invoke(app, ["mark", str(ep.id), "--read"])
+
+    assert result.exit_code == 0
+    assert "已标记为已读" in result.stdout
+    assert "Mark Read Episode" in result.stdout
+
+    updated = get_episode(ep.id)
+    assert updated.is_read is True
+    assert updated.is_starred is False
+
+
+def test_mark_unread():
+    """Marking an episode as unread sets is_read=False."""
+    feed = add_feed(url="https://example.com/mark-unread.xml", title="Mark Unread")
+    ep = add_episode(feed_id=feed.id, guid="mark-unread-ep", title="Mark Unread Ep")
+
+    runner.invoke(app, ["mark", str(ep.id), "--read"])
+    result = runner.invoke(app, ["mark", str(ep.id), "--unread"])
+
+    assert result.exit_code == 0
+    assert "已标记为未读" in result.stdout
+
+    updated = get_episode(ep.id)
+    assert updated.is_read is False
+
+
+def test_mark_star():
+    """Marking an episode as starred sets is_starred=True."""
+    feed = add_feed(url="https://example.com/mark-star.xml", title="Mark Star")
+    ep = add_episode(feed_id=feed.id, guid="mark-star-ep", title="Mark Star Episode")
+
+    result = runner.invoke(app, ["mark", str(ep.id), "--star"])
+
+    assert result.exit_code == 0
+    assert "已添加星标" in result.stdout
+
+    updated = get_episode(ep.id)
+    assert updated.is_starred is True
+    assert updated.is_read is False
+
+
+def test_mark_unstar():
+    """Removing star sets is_starred=False."""
+    feed = add_feed(url="https://example.com/mark-unstar.xml", title="Mark Unstar")
+    ep = add_episode(feed_id=feed.id, guid="mark-unstar-ep", title="Mark Unstar Ep")
+
+    runner.invoke(app, ["mark", str(ep.id), "--star"])
+    result = runner.invoke(app, ["mark", str(ep.id), "--unstar"])
+
+    assert result.exit_code == 0
+    assert "已取消星标" in result.stdout
+
+    updated = get_episode(ep.id)
+    assert updated.is_starred is False
+
+
+def test_mark_both():
+    """Marking both --read and --star in one command works."""
+    feed = add_feed(url="https://example.com/mark-both.xml", title="Mark Both")
+    ep = add_episode(feed_id=feed.id, guid="mark-both-ep", title="Mark Both Episode")
+
+    result = runner.invoke(app, ["mark", str(ep.id), "--read", "--star"])
+
+    assert result.exit_code == 0
+    assert "已标记为已读" in result.stdout
+    assert "已添加星标" in result.stdout
+
+    updated = get_episode(ep.id)
+    assert updated.is_read is True
+    assert updated.is_starred is True
+
+
+def test_mark_nonexistent():
+    """Marking a nonexistent episode shows error."""
+    result = runner.invoke(app, ["mark", "9999", "--read"])
+
+    assert result.exit_code == 1
+    assert "未找到" in result.stdout
+
+
+def test_mark_no_flags():
+    """Mark command with no flags shows help message."""
+    feed = add_feed(url="https://example.com/mark-noflags.xml", title="No Flags")
+    ep = add_episode(feed_id=feed.id, guid="mark-noflags-ep", title="No Flags Ep")
+
+    result = runner.invoke(app, ["mark", str(ep.id)])
+
+    assert result.exit_code == 1
+    assert "请指定标记操作" in result.stdout
+
+
+def test_episode_detail_shows_read_status():
+    """Episode detail command displays read/star status."""
+    feed = add_feed(url="https://example.com/ep-detail.xml", title="Detail Feed")
+    ep = add_episode(feed_id=feed.id, guid="ep-detail-ep", title="Detail Episode")
+
+    runner.invoke(app, ["mark", str(ep.id), "--read", "--star"])
+
+    result = runner.invoke(app, ["episode", str(ep.id)])
+
+    assert result.exit_code == 0
+    assert "✅ 已读" in result.stdout
+    assert "⭐ 是" in result.stdout
+
+
+def test_list_shows_unread_and_star_marks():
+    """List command shows 📖 for unread and ⭐ for starred episodes."""
+    feed = add_feed(url="https://example.com/list-marks.xml", title="List Marks")
+    ep1 = add_episode(feed_id=feed.id, guid="list-marks-1", title="Unread Starred")
+    ep2 = add_episode(feed_id=feed.id, guid="list-marks-2", title="Read No Star")
+
+    runner.invoke(app, ["mark", str(ep1.id), "--star"])
+    runner.invoke(app, ["mark", str(ep2.id), "--read"])
+
+    result = runner.invoke(app, ["list", "--feed", str(feed.id)])
+
+    assert result.exit_code == 0
+    assert "📖" in result.stdout
+    assert "⭐" in result.stdout
