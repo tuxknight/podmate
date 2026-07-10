@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from pathlib import Path
@@ -943,6 +944,73 @@ def download(
             border_style="red",
         ))
         raise typer.Exit(code=1)
+
+
+# ── 命令：export ───────────────────────────────────────
+
+
+def _get_cbrain_dir() -> Path:
+    """Return cbrain podcasts directory from config, with fallback."""
+    cbrain_dir = load_config().get("storage", {}).get("cbrain_dir", "")
+    if cbrain_dir:
+        return Path(os.path.expanduser(cbrain_dir))
+    return Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
+
+
+@app.command()
+def export(
+    episode_id: int | None = typer.Argument(None, help="剧集 ID，导出指定剧集的转写稿"),
+    rebuild_index: bool = typer.Option(
+        False, "--rebuild-index", help="扫描所有已导出的转写稿，重建 index.md"
+    ),
+) -> None:
+    """导出转写稿到 cbrain 知识库。"""
+    from .pipeline import _update_podcasts_index
+
+    ensure_data_dirs()
+    init_db()
+
+    cbrain_podcasts = _get_cbrain_dir()
+
+    if rebuild_index:
+        cbrain_podcasts.mkdir(parents=True, exist_ok=True)
+        _update_podcasts_index(str(cbrain_podcasts))
+        console.print(
+            f"[green]✅ 索引已重建: {cbrain_podcasts / 'index.md'}[/green]"
+        )
+        return
+
+    if episode_id is None:
+        console.print("[yellow]请指定剧集 ID 或使用 --rebuild-index[/yellow]")
+        console.print(
+            "[dim]用法: podmate export <episode-id> 或 podmate export --rebuild-index[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    ep = get_episode(episode_id)
+    if not ep:
+        console.print(f"[red]❌ 未找到剧集 ID: {episode_id}[/red]")
+        raise typer.Exit(code=1)
+
+    if not ep.transcript_path:
+        console.print(f"[yellow]📝 剧集 #{episode_id} 尚未转写，无法导出[/yellow]")
+        console.print(
+            f"[dim]提示: 先运行 [cyan]podmate download {episode_id}[/cyan] 下载并转写[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    md_path = Path(ep.transcript_path).with_suffix(".md")
+    if not md_path.is_file():
+        console.print(f"[yellow]📝 剧集 #{episode_id} 的 Markdown 文字稿不存在[/yellow]")
+        console.print(
+            f"[dim]提示: 重新运行 [cyan]podmate download {episode_id}[/cyan] 生成文字稿[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    cbrain_podcasts.mkdir(parents=True, exist_ok=True)
+    dest = cbrain_podcasts / md_path.name
+    shutil.copy2(md_path, dest)
+    console.print(f"[green]✅ 已导出到: {dest}[/green]")
 
 
 # ── 命令：play ────────────────────────────────────────

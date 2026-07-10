@@ -1331,7 +1331,11 @@ def test_pipeline_saves_markdown_alongside_json(tmp_path, monkeypatch):
         "deepseek": {"api_key": "sk-test", "api_url": "https://api.example.com/v1", "model": "test", "temperature": 0.3},  # noqa: E501
         "dubbing": {"voice": "test-voice", "rate": "1.0", "volume": "1.0"},
         "podcast_index": {"api_key": "", "api_secret": ""},
-        "storage": {"data_dir": str(tmp_path), "keep_episodes": 5},
+        "storage": {
+            "data_dir": str(tmp_path),
+            "keep_episodes": 5,
+            "cbrain_dir": str(tmp_path / "cbrain" / "podcasts"),
+        },
     }
     monkeypatch.setattr("podmate.pipeline.DATA_DIR", str(tmp_path))
 
@@ -1487,8 +1491,8 @@ def test_pipeline_exports_to_cbrain_when_dir_exists(tmp_path, monkeypatch):
     assert "# Cbrain Test Episode" in content
 
 
-def test_pipeline_skips_cbrain_when_dir_missing(tmp_path, monkeypatch):
-    """When cbrain dir does not exist, pipeline succeeds without error."""
+def test_pipeline_creates_cbrain_dir_when_missing(tmp_path, monkeypatch):
+    """When cbrain dir does not exist, pipeline auto-creates it and exports."""
     import asyncio
 
     from podmate.db import add_episode, add_feed, set_episode_path, update_episode_status
@@ -1508,11 +1512,11 @@ def test_pipeline_skips_cbrain_when_dir_missing(tmp_path, monkeypatch):
     import podmate.config as config_mod
     monkeypatch.setattr(config_mod, "_config", test_cfg)
 
-    feed = add_feed(url="https://example.com/nocbrain-test.xml", title="No Cbrain")
+    feed = add_feed(url="https://example.com/autocreate-test.xml", title="Auto Create")
     ep = add_episode(
         feed_id=feed.id,
-        guid="nocbrain-test-guid",
-        title="No Cbrain Episode",
+        guid="autocreate-test-guid",
+        title="Auto Create Episode",
         audio_url="https://example.com/audio.mp3",
     )
 
@@ -1523,7 +1527,7 @@ def test_pipeline_skips_cbrain_when_dir_missing(tmp_path, monkeypatch):
     for d in [episodes_dir, transcripts_dir, translations_dir, dubs_dir]:
         os.makedirs(d, exist_ok=True)
 
-    audio_path = os.path.join(episodes_dir, "nocbrain-test-guid.mp3")
+    audio_path = os.path.join(episodes_dir, "autocreate-test-guid.mp3")
     with open(audio_path, "wb") as f:
         f.write(b"\x00" * 2048)
     set_episode_path(ep.id, "local_path", audio_path)
@@ -1549,10 +1553,20 @@ def test_pipeline_skips_cbrain_when_dir_missing(tmp_path, monkeypatch):
 
     with patch("podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)), \
          patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)), \
-         patch("podmate.pipeline.dub_translation", new=AsyncMock(return_value=os.path.join(dubs_dir, "nocbrain-test-guid.mp3"))):  # noqa: E501
+         patch("podmate.pipeline.dub_translation", new=AsyncMock(return_value=os.path.join(dubs_dir, "autocreate-test-guid.mp3"))):  # noqa: E501
         result = asyncio.run(run_pipeline(ep.id, skip_dub=False))
 
-    assert result["exported_to_cbrain"] is False
+    assert result["exported_to_cbrain"] is True
+
+    # Verify directory was auto-created
+    cbrain_podcasts = nonexistent_home / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
+    assert cbrain_podcasts.is_dir()
+    copied_md = cbrain_podcasts / "autocreate-test-guid.md"
+    assert copied_md.is_file()
+
+    # Verify index.md was created
+    index_md = cbrain_podcasts / "index.md"
+    assert index_md.is_file()
 
 
 # ── CLI: search command ──────────────────────────────────────
@@ -1799,3 +1813,266 @@ def test_list_shows_unread_and_star_marks():
     assert result.exit_code == 0
     assert "📖" in result.stdout
     assert "⭐" in result.stdout
+
+
+# ── Podcasts Index: _extract_title_from_md ───────────────
+
+
+def test_extract_title_from_h1(tmp_path):
+    """Title extracted from H1 when no frontmatter present."""
+    from podmate.pipeline import _extract_title_from_md
+
+    md = tmp_path / "ep1.md"
+    md.write_text("# My Episode Title\n\nSome content.\n")
+    assert _extract_title_from_md(md) == "My Episode Title"
+
+
+def test_extract_title_from_frontmatter(tmp_path):
+    """Title extracted from YAML frontmatter title field."""
+    from podmate.pipeline import _extract_title_from_md
+
+    md = tmp_path / "ep2.md"
+    md.write_text("---\ntitle: FM Title\n---\n\n# Different H1\n\nContent.\n")
+    assert _extract_title_from_md(md) == "FM Title"
+
+
+def test_extract_title_from_frontmatter_non_dict(tmp_path):
+    """Frontmatter that isn't a dict falls back to H1."""
+    from podmate.pipeline import _extract_title_from_md
+
+    md = tmp_path / "ep3.md"
+    md.write_text("---\n- list item\n- another\n---\n\n# H1 Title\n\nContent.\n")
+    assert _extract_title_from_md(md) == "H1 Title"
+
+
+def test_extract_title_falls_back_to_filename(tmp_path):
+    """When no frontmatter or H1, use stem as title."""
+    from podmate.pipeline import _extract_title_from_md
+
+    md = tmp_path / "some-guid.md"
+    md.write_text("Just some text, no heading.\n")
+    assert _extract_title_from_md(md) == "some-guid"
+
+
+def test_extract_title_invalid_yaml_falls_back(tmp_path):
+    """Malformed YAML frontmatter falls back to H1."""
+    from podmate.pipeline import _extract_title_from_md
+
+    md = tmp_path / "bad.md"
+    md.write_text("---\n: bad yaml: :\n---\n\n# Safe Title\n\nContent.\n")
+    assert _extract_title_from_md(md) == "Safe Title"
+
+
+# ── Podcasts Index: _update_podcasts_index ──────────────
+
+
+def test_update_index_empty_dir(tmp_path):
+    """Empty directory generates 'no records' placeholder."""
+    from podmate.pipeline import _update_podcasts_index
+
+    _update_podcasts_index(str(tmp_path))
+
+    index_md = tmp_path / "index.md"
+    assert index_md.is_file()
+    content = index_md.read_text()
+    assert "# 🎙 播客转写稿" in content
+    assert "暂无转写记录" in content
+
+
+def test_update_index_with_files(tmp_path):
+    """Directory with .md files generates correct table."""
+    from podmate.pipeline import _update_podcasts_index
+
+    (tmp_path / "ep1.md").write_text("# Episode One\n\nContent.\n")
+    (tmp_path / "ep2.md").write_text("# Episode Two\n\nContent.\n")
+
+    _update_podcasts_index(str(tmp_path))
+
+    index_md = tmp_path / "index.md"
+    content = index_md.read_text()
+    assert "| # | 标题 |" in content
+    assert "[Episode One](ep1.md)" in content
+    assert "[Episode Two](ep2.md)" in content
+    # ep1 comes first (sorted)
+    assert content.index("Episode One") < content.index("Episode Two")
+
+
+def test_update_index_excludes_self(tmp_path):
+    """index.md is excluded from the scanned files."""
+    from podmate.pipeline import _update_podcasts_index
+
+    (tmp_path / "ep1.md").write_text("# Ep One\n\nContent.\n")
+    (tmp_path / "index.md").write_text("old index")
+
+    _update_podcasts_index(str(tmp_path))
+
+    content = tmp_path.joinpath("index.md").read_text()
+    assert "[Ep One](ep1.md)" in content
+    # Should not link to itself
+    assert "[index](index.md)" not in content.replace(" ", "").replace("|", "").replace("-", "")
+
+
+def test_update_index_no_write_when_unchanged(tmp_path):
+    """When index content is identical, file is not overwritten."""
+    from podmate.pipeline import _update_podcasts_index
+
+    (tmp_path / "ep1.md").write_text("# Ep One\n\nContent.\n")
+
+    _update_podcasts_index(str(tmp_path))
+    index_md = tmp_path / "index.md"
+    mtime1 = index_md.stat().st_mtime
+    content1 = index_md.read_text()
+
+    _update_podcasts_index(str(tmp_path))
+    mtime2 = index_md.stat().st_mtime
+
+    assert mtime1 == mtime2
+    assert index_md.read_text() == content1
+
+
+def test_update_index_rewrites_when_changed(tmp_path):
+    """When .md files change, index is rewritten."""
+    from podmate.pipeline import _update_podcasts_index
+
+    (tmp_path / "ep1.md").write_text("# Ep One\n\nContent.\n")
+    _update_podcasts_index(str(tmp_path))
+    content1 = tmp_path.joinpath("index.md").read_text()
+    assert "[Ep One](ep1.md)" in content1
+    assert "[Ep Two](ep2.md)" not in content1
+
+    (tmp_path / "ep2.md").write_text("# Ep Two\n\nContent.\n")
+    _update_podcasts_index(str(tmp_path))
+    content2 = tmp_path.joinpath("index.md").read_text()
+    assert "[Ep One](ep1.md)" in content2
+    assert "[Ep Two](ep2.md)" in content2
+    assert content2 != content1
+
+
+# ── CLI: export command ─────────────────────────────────
+
+
+def test_cli_export_rebuild_index(tmp_path, monkeypatch):
+    """export --rebuild-index generates index from .md files in cbrain dir."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+    (cbrain_dir / "a.md").write_text("# Episode A\n\nContent.\n")
+    (cbrain_dir / "b.md").write_text("# Episode B\n\nContent.\n")
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    result = runner.invoke(app, ["export", "--rebuild-index"])
+
+    assert result.exit_code == 0
+    assert "索引已重建" in result.stdout
+    index_md = cbrain_dir / "index.md"
+    assert index_md.is_file()
+    content = index_md.read_text()
+    assert "[Episode A](a.md)" in content
+    assert "[Episode B](b.md)" in content
+
+
+def test_cli_export_episode_no_transcript(tmp_path, monkeypatch):
+    """export <episode-id> fails when episode has no transcript."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/export-notrans.xml", title="No Trans")
+    ep = add_episode(feed_id=feed.id, guid="no-trans-export", title="No Trans Ep")
+    # No transcript_path set
+
+    result = runner.invoke(app, ["export", str(ep.id)])
+
+    assert result.exit_code == 1
+    assert "尚未转写" in result.stdout
+
+
+def test_cli_export_episode_md_missing(tmp_path, monkeypatch):
+    """export <episode-id> fails when .md file does not exist."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/export-nomd.xml", title="No MD")
+    ep = add_episode(feed_id=feed.id, guid="no-md-export", title="No MD Ep")
+    set_episode_path(ep.id, "transcript_path", str(tmp_path / "nonexistent.json"))
+
+    result = runner.invoke(app, ["export", str(ep.id)])
+
+    assert result.exit_code == 1
+    assert "Markdown 文字稿不存在" in result.stdout
+
+
+def test_cli_export_episode_success(tmp_path, monkeypatch):
+    """export <episode-id> copies .md to cbrain and succeeds."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/export-ok.xml", title="Export OK")
+    ep = add_episode(feed_id=feed.id, guid="export-ok-guid", title="Export OK Ep")
+
+    json_path = tmp_path / "export-ok-guid.json"
+    json_path.write_text("{}")
+    md_path = tmp_path / "export-ok-guid.md"
+    md_path.write_text("# Export OK Ep\n\nContent.\n")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    result = runner.invoke(app, ["export", str(ep.id)])
+
+    assert result.exit_code == 0
+    assert "已导出到" in result.stdout
+    copied = cbrain_dir / "export-ok-guid.md"
+    assert copied.is_file()
+    assert copied.read_text() == "# Export OK Ep\n\nContent.\n"
+
+
+def test_cli_export_episode_not_found():
+    """export with nonexistent episode ID shows error."""
+    result = runner.invoke(app, ["export", "9999"])
+
+    assert result.exit_code == 1
+    assert "未找到" in result.stdout
+
+
+def test_cli_export_no_args(tmp_path, monkeypatch):
+    """export with no arguments shows usage hint."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    result = runner.invoke(app, ["export"])
+
+    assert result.exit_code == 1
+    assert "请指定剧集 ID 或使用 --rebuild-index" in result.stdout
+
+
+def test_export_rebuild_index_empty_dir(tmp_path, monkeypatch):
+    """export --rebuild-index on empty dir creates placeholder index."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    result = runner.invoke(app, ["export", "--rebuild-index"])
+
+    assert result.exit_code == 0
+    index_md = cbrain_dir / "index.md"
+    assert index_md.is_file()
+    assert "暂无转写记录" in index_md.read_text()
