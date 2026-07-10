@@ -36,3 +36,4 @@ prompts/
 # Misc
 *.log
 .coverage
+logs/

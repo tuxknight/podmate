@@ -1186,18 +1186,15 @@ def _cmd_episode_list(
     console.print(table)
 
 
-def _cmd_episode_show(
-    episode_id: str = typer.Argument("", help="剧集 ID (正数). 负数请用 --id"),
-    id_opt: int = typer.Option(None, "--id", "-i", help="剧集 ID（支持负数）"),
-) -> None:
-    """查看剧集详情。"""
+def _episode_show_logic(episode_id_str: str, id_opt: int | None = None) -> None:
+    """查看剧集详情的核心逻辑（纯 Python 函数，无 Typer 依赖）。"""
     if id_opt is not None:
         episode_id_int = id_opt
-    elif episode_id:
+    elif episode_id_str:
         try:
-            episode_id_int = int(episode_id)
+            episode_id_int = int(episode_id_str)
         except ValueError:
-            console.print(f"[red]❌ 剧集 ID 必须是数字: {episode_id}[/red]")
+            console.print(f"[red]❌ 剧集 ID 必须是数字: {episode_id_str}[/red]")
             raise typer.Exit(code=1)
     else:
         console.print("[red]❌ 请指定剧集 ID[/red]")
@@ -1263,6 +1260,14 @@ def _cmd_episode_show(
             border_style="cyan",
         )
     )
+
+
+def _cmd_episode_show(
+    episode_id: str = typer.Argument("", help="剧集 ID (正数). 负数请用 --id"),
+    id_opt: int = typer.Option(None, "--id", "-i", help="剧集 ID（支持负数）"),
+) -> None:
+    """查看剧集详情。"""
+    _episode_show_logic(episode_id, id_opt)
 
 
 def _cmd_episode_mark(
@@ -1629,7 +1634,7 @@ def show_deprecated(
 ) -> None:
     """[已废弃] 查看剧集详情 — 请使用 episode show。"""
     console.print(_DEPRECATION_MSG.format(old="show", new="episode show"))
-    _cmd_episode_show(episode_id=str(episode_id))
+    _episode_show_logic(episode_id_str=str(episode_id))
 
 
 @app.command(name="list", hidden=True)
