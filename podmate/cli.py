@@ -2,6 +2,8 @@
 
 import asyncio
 import os
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 
 import typer
 from rich import box
@@ -25,7 +27,7 @@ from .db import (
     get_feeds,
     init_db,
 )
-from .feed import PodcastIndexClient, resolve_feed, search_itunes
+from .feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
 
 DATA_SUBDIRS = ["episodes", "transcripts", "translations", "dubs"]
 
@@ -368,6 +370,95 @@ def refresh(
         title=f"podmate refresh #{feed_id}",
         border_style="green",
     ))
+
+
+# ── 命令：poll ───────────────────────────────────────
+
+
+@app.command()
+def poll(
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="仅检查更新，不入库",
+    ),
+) -> None:
+    """轮询所有已订阅播客的 RSS，检查新剧集。"""
+    feeds = get_feeds()
+    if not feeds:
+        console.print("[dim]📭 还没有订阅任何播客[/dim]")
+        console.print("[dim]使用 [cyan]podmate sub <url>[/cyan] 订阅播客[/dim]")
+        return
+
+    total_new = 0
+    updated_count = 0
+
+    for feed in feeds:
+        existing_eps = get_episodes(feed_id=feed.id, limit=99999)
+        existing_guids = {ep.guid for ep in existing_eps}
+
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(parse_feed, feed.url)
+                feed_data = future.result(timeout=15)
+        except FutureTimeoutError:
+            console.print(f"[yellow]⚠️ {feed.title}: RSS 获取超时[/yellow]")
+            continue
+        except Exception as e:
+            console.print(f"[yellow]⚠️ {feed.title}: RSS 获取失败 ({e})[/yellow]")
+            continue
+
+        new_episodes = [
+            ep for ep in feed_data.get("episodes", [])
+            if ep.get("guid") not in existing_guids
+        ]
+
+        if new_episodes:
+            updated_count += 1
+            console.print(
+                f"🎙️ [bold]{feed.title}[/bold] → 发现 "
+                f"[bold green]{len(new_episodes)}[/bold green] 集新剧集"
+            )
+            for i, ep in enumerate(new_episodes, start=1):
+                console.print(f"  [dim]{i}.[/dim] {ep.get('title', '')[:60]}")
+
+            if not dry_run:
+                for ep in new_episodes:
+                    try:
+                        add_episode(
+                            feed_id=feed.id,
+                            guid=ep.get("guid", ""),
+                            title=ep.get("title", ""),
+                            description=ep.get("description"),
+                            pub_date=ep.get("pub_date"),
+                            audio_url=ep.get("audio_url"),
+                            duration_sec=ep.get("duration_sec"),
+                        )
+                        total_new += 1
+                    except Exception:
+                        pass
+
+        if not dry_run:
+            conn = get_connection()
+            conn.execute(
+                "UPDATE feeds SET last_fetched_at = datetime('now') WHERE id = ?",
+                (feed.id,),
+            )
+            conn.commit()
+
+    if dry_run:
+        console.print()
+        console.print(
+            f"[bold]共检查 [cyan]{len(feeds)}[/cyan] 个订阅，"
+            f"[yellow]{updated_count}[/yellow] 个有更新[/bold] "
+            f"[dim](--dry-run 模式，未入库)[/dim]"
+        )
+    else:
+        console.print()
+        console.print(
+            f"[bold green]✅ 共检查 [cyan]{len(feeds)}[/cyan] 个订阅，"
+            f"[yellow]{updated_count}[/yellow] 个有更新，"
+            f"新增 [cyan]{total_new}[/cyan] 集[/bold green]"
+        )
 
 
 # ── 命令：unsubscribe ────────────────────────────────

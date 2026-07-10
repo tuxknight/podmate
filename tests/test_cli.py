@@ -898,3 +898,134 @@ def test_feed_itunes_id_defaults_to_none():
         title="No ITunes ID",
     )
     assert feed.itunes_id is None
+
+
+# ── CLI: poll command ──────────────────────────────────────
+
+
+def test_poll_command_no_feeds():
+    """When no feeds exist, poll shows helpful message."""
+    result = runner.invoke(app, ["poll"])
+
+    assert result.exit_code == 0
+    assert "还没有订阅任何播客" in result.stdout
+
+
+def test_poll_command_shows_updates():
+    """Poll detects new episodes from RSS and adds them to DB."""
+    feed = add_feed(
+        url="https://example.com/poll-test.xml",
+        title="Poll Test Podcast",
+    )
+    add_episode(feed_id=feed.id, guid="old-1", title="Old Episode")
+
+    mock_feed_data = {
+        "title": "Poll Test Podcast",
+        "author": "Author",
+        "description": "Desc",
+        "image_url": "",
+        "link": "",
+        "episodes": [
+            {"title": "Old Episode", "guid": "old-1", "description": "",
+             "pub_date": "2024-01-01", "audio_url": "", "duration_sec": 0},
+            {"title": "New Episode 1", "guid": "new-1", "description": "",
+             "pub_date": "2024-02-01", "audio_url": "", "duration_sec": 0},
+            {"title": "New Episode 2", "guid": "new-2", "description": "",
+             "pub_date": "2024-03-01", "audio_url": "", "duration_sec": 0},
+        ],
+    }
+
+    with patch("podmate.cli.parse_feed", return_value=mock_feed_data):
+        result = runner.invoke(app, ["poll"])
+
+    assert result.exit_code == 0
+    assert "Poll Test Podcast" in result.stdout
+    assert "发现" in result.stdout
+    assert "2" in result.stdout
+    assert "New Episode 1" in result.stdout
+    assert "New Episode 2" in result.stdout
+    assert "新增" in result.stdout
+
+    eps = get_episodes(feed_id=feed.id, limit=9999)
+    guids = {ep.guid for ep in eps}
+    assert "old-1" in guids
+    assert "new-1" in guids
+    assert "new-2" in guids
+    assert len(eps) == 3
+
+
+def test_poll_command_dry_run():
+    """Dry-run mode shows new episodes but does not add them to DB."""
+    feed = add_feed(
+        url="https://example.com/poll-dryrun.xml",
+        title="Dry Run Podcast",
+    )
+    add_episode(feed_id=feed.id, guid="existing-1", title="Existing Episode")
+
+    before_eps = get_episodes(feed_id=feed.id, limit=9999)
+    assert len(before_eps) == 1
+
+    mock_feed_data = {
+        "title": "Dry Run Podcast",
+        "author": "",
+        "description": "",
+        "image_url": "",
+        "link": "",
+        "episodes": [
+            {"title": "Existing Episode", "guid": "existing-1", "description": "",
+             "pub_date": "", "audio_url": "", "duration_sec": 0},
+            {"title": "Would Be New", "guid": "new-dry-1", "description": "",
+             "pub_date": "", "audio_url": "", "duration_sec": 0},
+        ],
+    }
+
+    with patch("podmate.cli.parse_feed", return_value=mock_feed_data):
+        result = runner.invoke(app, ["poll", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Dry Run Podcast" in result.stdout
+    assert "发现" in result.stdout
+    assert "Would Be New" in result.stdout
+    assert "--dry-run" in result.stdout
+
+    after_eps = get_episodes(feed_id=feed.id, limit=9999)
+    assert len(after_eps) == 1
+
+
+def test_poll_command_error_continues():
+    """When one feed fails, poll continues with remaining feeds."""
+    feed1 = add_feed(
+        url="https://example.com/poll-good.xml",
+        title="Good Feed",
+    )
+    add_feed(
+        url="https://example.com/poll-bad.xml",
+        title="Bad Feed",
+    )
+    add_episode(feed_id=feed1.id, guid="g-1", title="Existing")
+
+    mock_good = {
+        "title": "Good Feed",
+        "author": "", "description": "", "image_url": "", "link": "",
+        "episodes": [
+            {"title": "New Good", "guid": "g-new", "description": "",
+             "pub_date": "", "audio_url": "", "duration_sec": 0},
+        ],
+    }
+
+    def mock_parse(url):
+        if "bad" in url:
+            raise ConnectionError("Network error")
+        return mock_good
+
+    with patch("podmate.cli.parse_feed", side_effect=mock_parse):
+        result = runner.invoke(app, ["poll"])
+
+    assert result.exit_code == 0
+    assert "Good Feed" in result.stdout
+    assert "Bad Feed" in result.stdout
+    assert "RSS 获取失败" in result.stdout
+
+    eps = get_episodes(feed_id=feed1.id, limit=9999)
+    guids = {ep.guid for ep in eps}
+    assert "g-new" in guids
