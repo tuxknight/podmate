@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -12,11 +13,48 @@ import httpx
 from .config import get as config_get
 
 
+_HERMES_ENV_LOADED = False
+
+
+def _maybe_load_hermes_env() -> None:
+    """Load API keys from ~/.hermes/.env if not already loaded.
+
+    This ensures PodMate works even when environment variables aren't
+    inherited from the parent shell (e.g., when run via Hermes terminal()).
+    """
+    global _HERMES_ENV_LOADED
+    if _HERMES_ENV_LOADED:
+        return
+
+    env_path = Path.home() / ".hermes" / ".env"
+    if not env_path.exists():
+        _HERMES_ENV_LOADED = True
+        return
+
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip("'\"")
+        if key and val:
+            os.environ.setdefault(key, val)
+
+    # Alias: Hermes uses the same API key as DeepSeek
+    if "DEEPSEEK_API_KEY" in os.environ and "HERMES_API_KEY" not in os.environ:
+        os.environ["HERMES_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
+
+    _HERMES_ENV_LOADED = True
+
+
 def _get_provider() -> str:
     return config_get("translator", "provider", "hermes")
 
 
 def _get_api_key(section: str = "deepseek") -> str:
+    # Try loading from .hermes/.env as a fallback
+    _maybe_load_hermes_env()
     env_key = os.environ.get(f"{section.upper()}_API_KEY", "")
     if env_key:
         return env_key
