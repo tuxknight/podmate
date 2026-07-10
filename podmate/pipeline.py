@@ -344,6 +344,13 @@ def _update_podcasts_index(export_dir: str) -> None:
             ep_meta = meta.get(base, {})
             pub_date = ep_meta.get("pub_date") or ""
             date_cell = pub_date[:10] if len(pub_date) >= 10 else (pub_date or "—")
+            # Try parsing standard HTTP date format → ISO date
+            try:
+                from email.utils import parsedate_to_datetime
+                parsed = parsedate_to_datetime(pub_date.split(" GMT")[0])
+                date_cell = parsed.strftime("%Y-%m-%d")
+            except Exception:
+                pass
 
             duration_sec = ep_meta.get("duration_sec")
             duration_cell = _format_duration(duration_sec) if duration_sec else "—"
@@ -359,7 +366,18 @@ def _update_podcasts_index(export_dir: str) -> None:
             source_cell = feed_title if feed_title else "—"
 
             description = ep_meta.get("description") or ""
-            desc_cell = _truncate_text(description, 80) if description else "—"
+            # Skip sponsor/ads leading paragraph — they start with "Brought to You By"
+            desc_clean = description
+            for prefix in ("Brought to You By", "This episode is", "This podcast is", "Check out"):
+                if desc_clean.strip().startswith(prefix):
+                    # Find first sentence boundary after the ad block
+                    for sep in ("If you", "In today", "In this", "Today we", "We cover"):
+                        idx = desc_clean.find(sep)
+                        if idx >= 0:
+                            desc_clean = desc_clean[idx:]
+                            break
+                    break
+            desc_cell = _truncate_text(desc_clean, 80) if desc_clean else "—"
 
             lines.append(
                 f"| {i} | {title_cell} | {date_cell} | {duration_cell} "
