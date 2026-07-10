@@ -2444,3 +2444,122 @@ def test_export_rebuild_index_empty_dir(tmp_path, monkeypatch):
     index_md = cbrain_dir / "index.md"
     assert index_md.is_file()
     assert "暂无转写记录" in index_md.read_text()
+
+
+# ── CLI: export --format ───────────────────────────────
+
+
+def test_cli_export_format_json(tmp_path, monkeypatch):
+    """export --format json copies .json transcript instead of .md."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/export-json.xml", title="Export JSON")
+    ep = add_episode(feed_id=feed.id, guid="export-json-guid", title="Export JSON Ep")
+
+    json_path = tmp_path / "export-json-guid.json"
+    json_path.write_text('{"text":"Hello world.","segments":[]}')
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    result = runner.invoke(app, ["export", str(ep.id), "--format", "json"])
+
+    assert result.exit_code == 0
+    assert "已导出到" in result.stdout
+    copied_json = cbrain_dir / "export-json-guid.json"
+    assert copied_json.is_file()
+    assert copied_json.read_text() == '{"text":"Hello world.","segments":[]}'
+
+
+def test_cli_export_format_invalid():
+    """export --format with unsupported value shows error."""
+    result = runner.invoke(app, ["export", "1", "--format", "txt"])
+
+    assert result.exit_code == 1
+    assert "不支持的格式" in result.stdout
+    assert "txt" in result.stdout
+
+
+# ── CLI: export --output ───────────────────────────────
+
+
+def test_cli_export_custom_output(tmp_path, monkeypatch):
+    """export --output copies .md to custom directory."""
+    custom_dir = tmp_path / "my-backup"
+    # Don't pre-create — export should auto-create it
+
+    feed = add_feed(url="https://example.com/export-out.xml", title="Export Out")
+    ep = add_episode(feed_id=feed.id, guid="export-out-guid", title="Export Out Ep")
+
+    json_path = tmp_path / "export-out-guid.json"
+    json_path.write_text("{}")
+    md_path = tmp_path / "export-out-guid.md"
+    md_path.write_text("# Export Out Ep\n\nContent.\n")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    result = runner.invoke(app, ["export", str(ep.id), "--output", str(custom_dir)])
+
+    assert result.exit_code == 0
+    assert "已导出到" in result.stdout
+    assert custom_dir.is_dir()
+    copied_md = custom_dir / "export-out-guid.md"
+    assert copied_md.is_file()
+    assert copied_md.read_text() == "# Export Out Ep\n\nContent.\n"
+
+
+def test_cli_export_format_json_custom_output(tmp_path, monkeypatch):
+    """export --format json --output copies .json to custom directory."""
+    custom_dir = tmp_path / "json-backup"
+
+    feed = add_feed(url="https://example.com/export-json-out.xml", title="JSON Out")
+    ep = add_episode(feed_id=feed.id, guid="export-json-out-guid", title="JSON Out Ep")
+
+    json_path = tmp_path / "export-json-out-guid.json"
+    json_path.write_text('{"text":"Test.","segments":[]}')
+    md_path = tmp_path / "export-json-out-guid.md"
+    md_path.write_text("# Should not be copied\n")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    result = runner.invoke(
+        app, ["export", str(ep.id), "--format", "json", "--output", str(custom_dir)]
+    )
+
+    assert result.exit_code == 0
+    assert "已导出到" in result.stdout
+    copied_json = custom_dir / "export-json-out-guid.json"
+    assert copied_json.is_file()
+    assert copied_json.read_text() == '{"text":"Test.","segments":[]}'
+    # .md should NOT be copied when format is json
+    assert not (custom_dir / "export-json-out-guid.md").is_file()
+
+
+# ── CLI: export --id (negative IDs) ────────────────────
+
+
+def test_cli_export_negative_id_via_option(tmp_path, monkeypatch):
+    """export --id -1 parses negative episode IDs correctly."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/export-neg.xml", title="Neg Export")
+    ep = add_episode(feed_id=feed.id, guid="export-neg-guid", title="Neg Export Ep")
+
+    json_path = tmp_path / "export-neg-guid.json"
+    json_path.write_text("{}")
+    md_path = tmp_path / "export-neg-guid.md"
+    md_path.write_text("# Neg Export Ep\n\nContent.\n")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    result = runner.invoke(app, ["export", "--id", str(ep.id), "--format", "md"])
+
+    assert result.exit_code == 0
+    assert "已导出到" in result.stdout
+    copied_md = cbrain_dir / "export-neg-guid.md"
+    assert copied_md.is_file()

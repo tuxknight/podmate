@@ -969,10 +969,13 @@ def _get_cbrain_dir() -> Path:
 
 @app.command()
 def export(
-    episode_id: int | None = typer.Argument(None, help="剧集 ID，导出指定剧集的转写稿"),
+    episode_id: str | None = typer.Argument(None, help="剧集 ID，导出指定剧集的转写稿"),
     rebuild_index: bool = typer.Option(
         False, "--rebuild-index", help="扫描所有已导出的转写稿，重建 index.md"
     ),
+    id: int = typer.Option(None, "--id", "-i", help="剧集 ID（支持负数）"),
+    output: str = typer.Option("", "--output", "-o", help="目标目录（默认 cbrain 目录）"),
+    format: str = typer.Option("md", "--format", "-f", help="导出格式: md 或 json"),
 ) -> None:
     """导出转写稿到 cbrain 知识库。"""
     from .pipeline import _update_podcasts_index
@@ -980,45 +983,73 @@ def export(
     ensure_data_dirs()
     init_db()
 
-    cbrain_podcasts = _get_cbrain_dir()
-
     if rebuild_index:
+        cbrain_podcasts = _get_cbrain_dir()
         cbrain_podcasts.mkdir(parents=True, exist_ok=True)
         _update_podcasts_index(str(cbrain_podcasts))
         console.print(f"[green]✅ 索引已重建: {cbrain_podcasts / 'index.md'}[/green]")
         return
 
-    if episode_id is None:
+    # Resolve episode ID (support --id for negative IDs)
+    if id is not None:
+        episode_id_int = id
+    elif episode_id is not None and episode_id:
+        try:
+            episode_id_int = int(episode_id)
+        except ValueError:
+            console.print(f"[red]❌ 剧集 ID 必须是数字: {episode_id}[/red]")
+            raise typer.Exit(code=1)
+    else:
         console.print("[yellow]请指定剧集 ID 或使用 --rebuild-index[/yellow]")
         console.print(
             "[dim]用法: podmate export <episode-id> 或 podmate export --rebuild-index[/dim]"
         )
         raise typer.Exit(code=1)
 
-    ep = get_episode(episode_id)
+    if format not in ("md", "json"):
+        console.print(f"[red]❌ 不支持的格式: {format}，支持: md, json[/red]")
+        raise typer.Exit(code=1)
+
+    ep = get_episode(episode_id_int)
     if not ep:
-        console.print(f"[red]❌ 未找到剧集 ID: {episode_id}[/red]")
+        console.print(f"[red]❌ 未找到剧集 ID: {episode_id_int}[/red]")
         raise typer.Exit(code=1)
 
     if not ep.transcript_path:
-        console.print(f"[yellow]📝 剧集 #{episode_id} 尚未转写，无法导出[/yellow]")
+        console.print(f"[yellow]📝 剧集 #{episode_id_int} 尚未转写，无法导出[/yellow]")
         console.print(
-            f"[dim]提示: 先运行 [cyan]podmate download {episode_id}[/cyan] 下载并转写[/dim]"
+            f"[dim]提示: 先运行 [cyan]podmate download {episode_id_int}[/cyan] 下载并转写[/dim]"
         )
         raise typer.Exit(code=1)
 
-    md_path = Path(ep.transcript_path).with_suffix(".md")
-    if not md_path.is_file():
-        console.print(f"[yellow]📝 剧集 #{episode_id} 的 Markdown 文字稿不存在[/yellow]")
-        console.print(
-            f"[dim]提示: 重新运行 [cyan]podmate download {episode_id}[/cyan] 生成文字稿[/dim]"
-        )
-        raise typer.Exit(code=1)
+    # Determine output directory
+    if output:
+        dest_dir = Path(os.path.expanduser(output))
+    else:
+        dest_dir = _get_cbrain_dir()
 
-    cbrain_podcasts.mkdir(parents=True, exist_ok=True)
-    dest = cbrain_podcasts / md_path.name
-    shutil.copy2(md_path, dest)
-    console.print(f"[green]✅ 已导出到: {dest}[/green]")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    if format == "json":
+        src = Path(ep.transcript_path)
+        if not src.is_file():
+            console.print(f"[yellow]📝 剧集 #{episode_id_int} 的 JSON 转写稿不存在[/yellow]")
+            raise typer.Exit(code=1)
+        dest = dest_dir / src.name
+        shutil.copy2(src, dest)
+        console.print(f"[green]✅ 已导出到: {dest}[/green]")
+    else:
+        md_path = Path(ep.transcript_path).with_suffix(".md")
+        if not md_path.is_file():
+            console.print(f"[yellow]📝 剧集 #{episode_id_int} 的 Markdown 文字稿不存在[/yellow]")
+            console.print(
+                f"[dim]提示: 重新运行 [cyan]podmate download {episode_id_int}[/cyan]"
+                f" 生成文字稿[/dim]"
+            )
+            raise typer.Exit(code=1)
+        dest = dest_dir / md_path.name
+        shutil.copy2(md_path, dest)
+        console.print(f"[green]✅ 已导出到: {dest}[/green]")
 
 
 # ── 命令：play ────────────────────────────────────────
