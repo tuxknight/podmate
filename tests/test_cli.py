@@ -31,7 +31,7 @@ def _mock_httpx_client(json_data):
     """Build a mock httpx.AsyncClient context manager returning given JSON."""
     mock_resp = AsyncMock()
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.json = AsyncMock(return_value=json_data)
+    mock_resp.json = MagicMock(return_value=json_data)
 
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=mock_resp)

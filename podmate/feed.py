@@ -27,7 +27,7 @@ async def search_itunes(keyword: str, limit: int = 10) -> list[dict[str, Any]]:
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.get(url)
         resp.raise_for_status()
-        data = await resp.json()
+        data = resp.json()
 
     results: list[dict[str, Any]] = []
     for item in data.get("results", []):
@@ -221,7 +221,7 @@ class PodcastIndexClient:
                 headers=self._auth_headers(),
             )
             resp.raise_for_status()
-            data = await resp.json()
+            data = resp.json()
         return self._parse_episodes(data)
 
     async def search_by_itunes_id(self, itunes_id: int) -> list[dict[str, Any]]:
@@ -240,7 +240,7 @@ class PodcastIndexClient:
                 headers=self._auth_headers(),
             )
             resp.raise_for_status()
-            data = await resp.json()
+            data = resp.json()
         return self._parse_episodes(data)
 
     @staticmethod
@@ -343,7 +343,7 @@ def _strip_html(text: str) -> str:
     """去除 HTML 标签。"""
     clean = re.sub(r"<[^>]+>", "", text)
     clean = clean.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    clean = clean.replace("&quot;", "\"").replace("&#39;", "'")
+    clean = clean.replace("&quot;", '"').replace("&#39;", "'")
     return clean.strip()
 
 
