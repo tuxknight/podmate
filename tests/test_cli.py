@@ -640,7 +640,7 @@ def test_sub_by_url_preserves_itunes_id():
 
 def test_list_feeds_empty_shows_message():
     """Given no feeds, list command shows empty hint."""
-    result = runner.invoke(app, ["list"])
+    result = runner.invoke(app, ["feed", "list"])
 
     assert result.exit_code == 0
     assert "还没有订阅任何播客" in result.stdout
@@ -653,7 +653,7 @@ def test_list_feeds_shows_subscribed():
         title="List Test Podcast",
     )
 
-    result = runner.invoke(app, ["list"])
+    result = runner.invoke(app, ["feed", "list"])
 
     assert result.exit_code == 0
     assert "List Test Podcast" in result.stdout
@@ -712,7 +712,7 @@ def test_cli_describe_shows_feed_info():
         title="CLI Episode",
     )
 
-    result = runner.invoke(app, ["describe", str(feed.id)])
+    result = runner.invoke(app, ["feed", "show", str(feed.id)])
 
     assert result.exit_code == 0
     assert "CLI Describe Podcast" in result.stdout
@@ -721,7 +721,7 @@ def test_cli_describe_shows_feed_info():
 
 def test_cli_describe_nonexistent_feed():
     """Given invalid feed ID, describe shows error."""
-    result = runner.invoke(app, ["describe", "9999"])
+    result = runner.invoke(app, ["feed", "show", "9999"])
 
     assert result.exit_code == 1
     assert "未找到" in result.stdout
@@ -923,7 +923,7 @@ async def test_resolve_feed_all_pi_duplicates_stays_rss():
 def test_refresh_command_no_pi_key_shows_error():
     """When PI API key is not configured, refresh shows helpful error."""
     feed = add_feed(url="https://example.com/refresh-test.xml", title="Refresh Test")
-    result = runner.invoke(app, ["refresh", str(feed.id)])
+    result = runner.invoke(app, ["feed", "refresh", str(feed.id)])
     assert result.exit_code == 1
     assert "未配置" in result.stdout
 
@@ -986,7 +986,7 @@ def test_refresh_command_adds_new_episodes(monkeypatch):
     monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
 
     with patch("podmate.cli.resolve_feed", new=AsyncMock(return_value=mock_feed_data)):
-        result = runner.invoke(app, ["refresh", str(feed.id)])
+        result = runner.invoke(app, ["feed", "refresh", str(feed.id)])
 
     assert result.exit_code == 0
     assert "刷新完成" in result.stdout
@@ -1041,7 +1041,7 @@ def test_refresh_command_preserves_existing_episodes(monkeypatch):
     monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
 
     with patch("podmate.cli.resolve_feed", new=AsyncMock(return_value=mock_feed_data)):
-        result = runner.invoke(app, ["refresh", str(feed.id)])
+        result = runner.invoke(app, ["feed", "refresh", str(feed.id)])
 
     assert result.exit_code == 0
     eps = get_episodes(feed_id=feed.id, limit=9999)
@@ -2006,7 +2006,7 @@ def test_search_finds_matching_episodes(tmp_path):
     )
     set_episode_path(ep.id, "transcript_path", json_path)
 
-    result = runner.invoke(app, ["search", "kubernetes"])
+    result = runner.invoke(app, ["grep", "kubernetes"])
 
     assert result.exit_code == 0
     assert "Search Podcast" in result.stdout
@@ -2039,7 +2039,7 @@ def test_search_no_matches(tmp_path):
     )
     set_episode_path(ep.id, "transcript_path", json_path)
 
-    result = runner.invoke(app, ["search", "kubernetes"])
+    result = runner.invoke(app, ["grep", "kubernetes"])
 
     assert result.exit_code == 0
     assert "未找到匹配结果" in result.stdout
@@ -2051,7 +2051,7 @@ def test_search_no_transcripts():
     add_episode(feed_id=feed.id, guid="no-trans-ep", title="No Trans Episode")
     # No transcript_path set
 
-    result = runner.invoke(app, ["search", "anything"])
+    result = runner.invoke(app, ["grep", "anything"])
 
     assert result.exit_code == 0
     assert "未找到匹配结果" in result.stdout
@@ -2077,12 +2077,12 @@ def test_search_case_insensitive(tmp_path):
     )
     set_episode_path(ep.id, "transcript_path", json_path)
 
-    result = runner.invoke(app, ["search", "kubernetes"])
+    result = runner.invoke(app, ["grep", "kubernetes"])
 
     assert result.exit_code == 0
     assert "找到 1 处匹配" in result.stdout
     # Also test uppercase
-    result2 = runner.invoke(app, ["search", "KUBERNETES"])
+    result2 = runner.invoke(app, ["grep", "KUBERNETES"])
     assert result2.exit_code == 0
     assert "找到 1 处匹配" in result2.stdout
 
@@ -2128,7 +2128,7 @@ def test_search_limits_snippets_per_episode(tmp_path):
     )
     set_episode_path(ep.id, "transcript_path", json_path)
 
-    result = runner.invoke(app, ["search", "kubernetes"])
+    result = runner.invoke(app, ["grep", "kubernetes"])
 
     assert result.exit_code == 0
     # Total match count shows 4, but only 3 snippets displayed
@@ -2148,7 +2148,7 @@ def test_mark_read():
     feed = add_feed(url="https://example.com/mark-read.xml", title="Mark Read")
     ep = add_episode(feed_id=feed.id, guid="mark-read-ep", title="Mark Read Episode")
 
-    result = runner.invoke(app, ["mark", str(ep.id), "--read"])
+    result = runner.invoke(app, ["episode", "mark", str(ep.id), "--read"])
 
     assert result.exit_code == 0
     assert "已标记为已读" in result.stdout
@@ -2165,7 +2165,7 @@ def test_mark_unread():
     ep = add_episode(feed_id=feed.id, guid="mark-unread-ep", title="Mark Unread Ep")
 
     runner.invoke(app, ["mark", str(ep.id), "--read"])
-    result = runner.invoke(app, ["mark", str(ep.id), "--unread"])
+    result = runner.invoke(app, ["episode", "mark", str(ep.id), "--unread"])
 
     assert result.exit_code == 0
     assert "已标记为未读" in result.stdout
@@ -2179,7 +2179,7 @@ def test_mark_star():
     feed = add_feed(url="https://example.com/mark-star.xml", title="Mark Star")
     ep = add_episode(feed_id=feed.id, guid="mark-star-ep", title="Mark Star Episode")
 
-    result = runner.invoke(app, ["mark", str(ep.id), "--star"])
+    result = runner.invoke(app, ["episode", "mark", str(ep.id), "--star"])
 
     assert result.exit_code == 0
     assert "已添加星标" in result.stdout
@@ -2195,7 +2195,7 @@ def test_mark_unstar():
     ep = add_episode(feed_id=feed.id, guid="mark-unstar-ep", title="Mark Unstar Ep")
 
     runner.invoke(app, ["mark", str(ep.id), "--star"])
-    result = runner.invoke(app, ["mark", str(ep.id), "--unstar"])
+    result = runner.invoke(app, ["episode", "mark", str(ep.id), "--unstar"])
 
     assert result.exit_code == 0
     assert "已取消星标" in result.stdout
@@ -2209,7 +2209,7 @@ def test_mark_both():
     feed = add_feed(url="https://example.com/mark-both.xml", title="Mark Both")
     ep = add_episode(feed_id=feed.id, guid="mark-both-ep", title="Mark Both Episode")
 
-    result = runner.invoke(app, ["mark", str(ep.id), "--read", "--star"])
+    result = runner.invoke(app, ["episode", "mark", str(ep.id), "--read", "--star"])
 
     assert result.exit_code == 0
     assert "已标记为已读" in result.stdout
@@ -2222,7 +2222,7 @@ def test_mark_both():
 
 def test_mark_nonexistent():
     """Marking a nonexistent episode shows error."""
-    result = runner.invoke(app, ["mark", "9999", "--read"])
+    result = runner.invoke(app, ["episode", "mark", "9999", "--read"])
 
     assert result.exit_code == 1
     assert "未找到" in result.stdout
@@ -2233,7 +2233,7 @@ def test_mark_no_flags():
     feed = add_feed(url="https://example.com/mark-noflags.xml", title="No Flags")
     ep = add_episode(feed_id=feed.id, guid="mark-noflags-ep", title="No Flags Ep")
 
-    result = runner.invoke(app, ["mark", str(ep.id)])
+    result = runner.invoke(app, ["episode", "mark", str(ep.id)])
 
     assert result.exit_code == 1
     assert "请指定标记操作" in result.stdout
@@ -2241,7 +2241,7 @@ def test_mark_no_flags():
 
 def test_mark_negative_id_via_option():
     """Marking via --id -1 parses correctly (episode may not exist)."""
-    result = runner.invoke(app, ["mark", "--id", "-1", "--read"])
+    result = runner.invoke(app, ["episode", "mark", "--id", "-1", "--read"])
 
     assert result.exit_code in (0, 1)
 
@@ -2249,7 +2249,7 @@ def test_mark_negative_id_via_option():
 def test_mark_negative_positional_fails():
     """Mark with positional -1 fails — Click treats it as an option flag.
     Known limitation: use --id -1 instead."""
-    result = runner.invoke(app, ["mark", "-1", "--read"])
+    result = runner.invoke(app, ["episode", "mark", "-1", "--read"])
 
     assert result.exit_code == 2
     assert "No such option" in result.stdout or "No such option" in result.stderr
@@ -2257,14 +2257,14 @@ def test_mark_negative_positional_fails():
 
 def test_mark_dash_dash_1_fails():
     """Mark with positional --1 fails — Click treats it as an option flag."""
-    result = runner.invoke(app, ["mark", "--1", "--star"])
+    result = runner.invoke(app, ["episode", "mark", "--1", "--star"])
 
     assert result.exit_code == 2
 
 
 def test_mark_non_numeric_id():
     """Mark with non-numeric positional ID shows numeric error."""
-    result = runner.invoke(app, ["mark", "abc", "--read"])
+    result = runner.invoke(app, ["episode", "mark", "abc", "--read"])
 
     assert result.exit_code == 1
     assert "必须是数字" in result.stdout
@@ -2273,7 +2273,7 @@ def test_mark_non_numeric_id():
 
 def test_episode_negative_id_via_option():
     """Episode detail via --id -1 parses correctly."""
-    result = runner.invoke(app, ["episode", "--id", "-1"])
+    result = runner.invoke(app, ["episode", "show", "--id", "-1"])
 
     assert result.exit_code in (0, 1)
 
@@ -2283,9 +2283,9 @@ def test_episode_detail_shows_read_status():
     feed = add_feed(url="https://example.com/ep-detail.xml", title="Detail Feed")
     ep = add_episode(feed_id=feed.id, guid="ep-detail-ep", title="Detail Episode")
 
-    runner.invoke(app, ["mark", str(ep.id), "--read", "--star"])
+    runner.invoke(app, ["episode", "mark", str(ep.id), "--read", "--star"])
 
-    result = runner.invoke(app, ["episode", str(ep.id)])
+    result = runner.invoke(app, ["episode", "show", str(ep.id)])
 
     assert result.exit_code == 0
     assert "✅ 已读" in result.stdout
@@ -2298,10 +2298,10 @@ def test_list_shows_unread_and_star_marks():
     ep1 = add_episode(feed_id=feed.id, guid="list-marks-1", title="Unread Starred")
     ep2 = add_episode(feed_id=feed.id, guid="list-marks-2", title="Read No Star")
 
-    runner.invoke(app, ["mark", str(ep1.id), "--star"])
-    runner.invoke(app, ["mark", str(ep2.id), "--read"])
+    runner.invoke(app, ["episode", "mark", str(ep1.id), "--star"])
+    runner.invoke(app, ["episode", "mark", str(ep2.id), "--read"])
 
-    result = runner.invoke(app, ["list", "--feed", str(feed.id)])
+    result = runner.invoke(app, ["episode", "list", "--feed", str(feed.id)])
 
     assert result.exit_code == 0
     assert "📖" in result.stdout
@@ -2455,7 +2455,7 @@ def test_cli_export_rebuild_index(tmp_path, monkeypatch):
     test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
     monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
 
-    result = runner.invoke(app, ["export", "--rebuild-index"])
+    result = runner.invoke(app, ["export", "index"])
 
     assert result.exit_code == 0
     assert "索引已重建" in result.stdout
@@ -2479,7 +2479,7 @@ def test_cli_export_episode_no_transcript(tmp_path, monkeypatch):
     ep = add_episode(feed_id=feed.id, guid="no-trans-export", title="No Trans Ep")
     # No transcript_path set
 
-    result = runner.invoke(app, ["export", str(ep.id)])
+    result = runner.invoke(app, ["export", "episode", str(ep.id)])
 
     assert result.exit_code == 1
     assert "尚未转写" in result.stdout
@@ -2498,7 +2498,7 @@ def test_cli_export_episode_md_missing(tmp_path, monkeypatch):
     ep = add_episode(feed_id=feed.id, guid="no-md-export", title="No MD Ep")
     set_episode_path(ep.id, "transcript_path", str(tmp_path / "nonexistent.json"))
 
-    result = runner.invoke(app, ["export", str(ep.id)])
+    result = runner.invoke(app, ["export", "episode", str(ep.id)])
 
     assert result.exit_code == 1
     assert "Markdown 文字稿不存在" in result.stdout
@@ -2522,7 +2522,7 @@ def test_cli_export_episode_success(tmp_path, monkeypatch):
     md_path.write_text("# Export OK Ep\n\nContent.\n")
     set_episode_path(ep.id, "transcript_path", str(json_path))
 
-    result = runner.invoke(app, ["export", str(ep.id)])
+    result = runner.invoke(app, ["export", "episode", str(ep.id)])
 
     assert result.exit_code == 0
     assert "已导出到" in result.stdout
@@ -2533,7 +2533,7 @@ def test_cli_export_episode_success(tmp_path, monkeypatch):
 
 def test_cli_export_episode_not_found():
     """export with nonexistent episode ID shows error."""
-    result = runner.invoke(app, ["export", "9999"])
+    result = runner.invoke(app, ["export", "episode", "9999"])
 
     assert result.exit_code == 1
     assert "未找到" in result.stdout
@@ -2548,10 +2548,10 @@ def test_cli_export_no_args(tmp_path, monkeypatch):
     test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
     monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
 
-    result = runner.invoke(app, ["export"])
+    result = runner.invoke(app, ["export", "episode"])
 
     assert result.exit_code == 1
-    assert "请指定剧集 ID 或使用 --rebuild-index" in result.stdout
+    assert "请指定剧集 ID" in result.stdout
 
 
 def test_export_rebuild_index_empty_dir(tmp_path, monkeypatch):
@@ -2563,7 +2563,7 @@ def test_export_rebuild_index_empty_dir(tmp_path, monkeypatch):
     test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
     monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
 
-    result = runner.invoke(app, ["export", "--rebuild-index"])
+    result = runner.invoke(app, ["export", "index"])
 
     assert result.exit_code == 0
     index_md = cbrain_dir / "index.md"
@@ -2590,7 +2590,7 @@ def test_cli_export_format_json(tmp_path, monkeypatch):
     json_path.write_text('{"text":"Hello world.","segments":[]}')
     set_episode_path(ep.id, "transcript_path", str(json_path))
 
-    result = runner.invoke(app, ["export", str(ep.id), "--format", "json"])
+    result = runner.invoke(app, ["export", "episode", str(ep.id), "--format", "json"])
 
     assert result.exit_code == 0
     assert "已导出到" in result.stdout
@@ -2601,7 +2601,7 @@ def test_cli_export_format_json(tmp_path, monkeypatch):
 
 def test_cli_export_format_invalid():
     """export --format with unsupported value shows error."""
-    result = runner.invoke(app, ["export", "1", "--format", "txt"])
+    result = runner.invoke(app, ["export", "episode", "1", "--format", "txt"])
 
     assert result.exit_code == 1
     assert "不支持的格式" in result.stdout
@@ -2625,7 +2625,7 @@ def test_cli_export_custom_output(tmp_path, monkeypatch):
     md_path.write_text("# Export Out Ep\n\nContent.\n")
     set_episode_path(ep.id, "transcript_path", str(json_path))
 
-    result = runner.invoke(app, ["export", str(ep.id), "--output", str(custom_dir)])
+    result = runner.invoke(app, ["export", "episode", str(ep.id), "--output", str(custom_dir)])
 
     assert result.exit_code == 0
     assert "已导出到" in result.stdout
@@ -2649,7 +2649,7 @@ def test_cli_export_format_json_custom_output(tmp_path, monkeypatch):
     set_episode_path(ep.id, "transcript_path", str(json_path))
 
     result = runner.invoke(
-        app, ["export", str(ep.id), "--format", "json", "--output", str(custom_dir)]
+        app, ["export", "episode", str(ep.id), "--format", "json", "--output", str(custom_dir)]
     )
 
     assert result.exit_code == 0
@@ -2682,7 +2682,7 @@ def test_cli_export_negative_id_via_option(tmp_path, monkeypatch):
     md_path.write_text("# Neg Export Ep\n\nContent.\n")
     set_episode_path(ep.id, "transcript_path", str(json_path))
 
-    result = runner.invoke(app, ["export", "--id", str(ep.id), "--format", "md"])
+    result = runner.invoke(app, ["export", "episode", "--id", str(ep.id), "--format", "md"])
 
     assert result.exit_code == 0
     assert "已导出到" in result.stdout
@@ -3433,7 +3433,7 @@ def test_sync_cbrain_no_unexported(tmp_path, monkeypatch):
     update_episode_status(ep.id, "transcribed")
     mark_episode_exported(ep.id)
 
-    result = runner.invoke(app, ["sync-cbrain"])
+    result = runner.invoke(app, ["export", "sync"])
 
     assert result.exit_code == 0
     assert "[podmate] 所有转写稿已同步到 cbrain" in result.stdout
@@ -3461,7 +3461,7 @@ def test_sync_cbrain_dry_run(tmp_path, monkeypatch):
 
     update_episode_status(ep.id, "transcribed")
 
-    result = runner.invoke(app, ["sync-cbrain", "--dry-run"])
+    result = runner.invoke(app, ["export", "sync", "--dry-run"])
 
     assert result.exit_code == 0
     assert "预览模式" in result.stdout
@@ -3494,7 +3494,7 @@ def test_sync_cbrain_actual_sync(tmp_path, monkeypatch):
 
     update_episode_status(ep.id, "transcribed")
 
-    result = runner.invoke(app, ["sync-cbrain"])
+    result = runner.invoke(app, ["export", "sync"])
 
     assert result.exit_code == 0
     assert "已同步" in result.stdout
@@ -3554,7 +3554,7 @@ def test_sync_cbrain_with_since(tmp_path, monkeypatch):
     conn.execute("UPDATE episodes SET created_at = '2026-07-01' WHERE guid = ?", ("sync-new-guid",))
     conn.commit()
 
-    result = runner.invoke(app, ["sync-cbrain", "--since", "2026-06-01"])
+    result = runner.invoke(app, ["export", "sync", "--since", "2026-06-01"])
 
     assert result.exit_code == 0
     assert "已同步" in result.stdout
@@ -3586,7 +3586,7 @@ def test_sync_cbrain_skips_episodes_without_transcript(tmp_path, monkeypatch):
     add_episode(feed_id=feed.id, guid="sync-notrans-guid", title="No Trans Ep")
     # No transcript_path set
 
-    result = runner.invoke(app, ["sync-cbrain"])
+    result = runner.invoke(app, ["export", "sync"])
 
     assert result.exit_code == 0
     assert "[podmate] 所有转写稿已同步到 cbrain" in result.stdout
@@ -3614,7 +3614,7 @@ def test_sync_cbrain_rebuilds_index(tmp_path, monkeypatch):
 
     update_episode_status(ep.id, "transcribed")
 
-    result = runner.invoke(app, ["sync-cbrain"])
+    result = runner.invoke(app, ["export", "sync"])
 
     assert result.exit_code == 0
     index_md = cbrain_dir / "index.md"
