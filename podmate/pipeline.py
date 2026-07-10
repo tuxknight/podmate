@@ -257,7 +257,12 @@ def _update_podcasts_index(export_dir: str) -> None:
     if not md_files:
         content = "# 🎙 播客转写稿\n\n暂无转写记录。\n"
     else:
-        lines = ["# 🎙 播客转写稿", "", "| # | 标题 | 语言 | 来源播客 |", "|---|------|------|---------|"]
+        lines = [
+            "# 🎙 播客转写稿",
+            "",
+            "| # | 标题 | 语言 | 来源播客 |",
+            "|---|------|------|---------|",
+        ]  # noqa: E501
 
         # group by base name (strip .zh before extension)
         groups: dict[str, list[Path]] = {}

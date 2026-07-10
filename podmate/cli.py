@@ -38,9 +38,9 @@ from .db import (
     set_episode_path,
     update_episode_status,
 )
-from .models import Episode
 from .downloader import download_episode
 from .feed import PodcastIndexClient, _strip_html, parse_feed, resolve_feed, search_itunes
+from .models import Episode
 from .transcriber import _format_time, format_transcript, transcribe_via_deepgram
 
 DATA_SUBDIRS = ["episodes", "transcripts", "translations", "dubs"]
@@ -60,6 +60,7 @@ def ensure_data_dirs() -> None:
 def _safe_filename(guid: str) -> str:
     """将 guid 中的不安全字符替换为 _，避免 Markdown URL 解析问题。"""
     return guid.replace(":", "_")
+
 
 def _get_data_path(guid: str, subdir: str) -> str:
     """返回 data/{subdir}/{safe_guid}.json 或 data/{subdir}/{safe_guid}.mp3 的完整路径。"""
@@ -1535,8 +1536,7 @@ def _cmd_export_episode(
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    # 友好文件名: feed_title/guid-safe.md (避免 : 等 Markdown 特殊字符)
-    feed_name = ep.feed_title or "podcast"
+    # 友好文件名: slug.md / slug.zh.md (避免 : 等 Markdown 特殊字符)
     slug = _safe_filename(ep.guid)
 
     if format == "json":
@@ -1636,7 +1636,7 @@ def _export_with_metadata(src: Path, dest: Path, ep: Episode) -> None:
         while end_idx < len(lines) and lines[end_idx].strip() != "---":
             end_idx += 1
         if end_idx < len(lines):
-            content = "\n".join(lines[end_idx + 1:])
+            content = "\n".join(lines[end_idx + 1 :])
 
     # 构建元数据
     meta_lines = ["---"]
