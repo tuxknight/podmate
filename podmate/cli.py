@@ -29,7 +29,9 @@ from .db import (
     get_episodes,
     get_feed,
     get_feeds,
+    get_unexported_episodes,
     init_db,
+    mark_episode_exported,
     mark_episode_read,
     mark_episode_starred,
 )
@@ -1056,6 +1058,63 @@ def export(
         dest = dest_dir / md_path.name
         shutil.copy2(md_path, dest)
         console.print(f"[green]✅ 已导出到: {dest}[/green]")
+
+
+# ── 命令：sync-cbrain ──────────────────────────────────
+
+
+@app.command()
+def sync_cbrain(
+    dry_run: bool = typer.Option(False, "--dry-run", help="预览模式，不实际导出"),
+    since: str = typer.Option("", "--since", help="只导出指定日期后的剧集 (YYYY-MM-DD)"),
+) -> None:
+    """批量同步转写稿到 cbrain 知识库。"""
+    from .pipeline import _update_podcasts_index
+
+    since_val = since if since else None
+    episodes = get_unexported_episodes(since=since_val)
+
+    cbrain_dir = _get_cbrain_dir()
+    cbrain_dir.mkdir(parents=True, exist_ok=True)
+
+    if not episodes:
+        console.print(r"[dim]\[podmate] 所有转写稿已同步到 cbrain[/dim]")
+        return
+
+    if dry_run:
+        console.print(f"[bold]🔍 预览模式 — 将导出 [cyan]{len(episodes)}[/cyan] 集:[/bold]\n")
+        for ep in episodes:
+            md_path = Path(ep.transcript_path).with_suffix(".md") if ep.transcript_path else None
+            json_path = Path(ep.transcript_path) if ep.transcript_path else None
+            md_status = "✅" if md_path and md_path.is_file() else "❌"
+            json_status = "✅" if json_path and json_path.is_file() else "❌"
+            console.print(
+                f"  [dim]#{ep.id}[/dim] {ep.title[:50]}"
+                + ("…" if len(ep.title) > 50 else "")
+                + f"  md={md_status} json={json_status}"
+            )
+        console.print()
+        console.print(f"[dim]📊 共 {len(episodes)} 集待导出 (--dry-run 模式，未实际导出)[/dim]")
+        return
+
+    exported = 0
+    for ep in episodes:
+        copied = False
+        if ep.transcript_path:
+            md_src = Path(ep.transcript_path).with_suffix(".md")
+            if md_src.is_file():
+                shutil.copy2(md_src, cbrain_dir / md_src.name)
+                copied = True
+            json_src = Path(ep.transcript_path)
+            if json_src.is_file():
+                shutil.copy2(json_src, cbrain_dir / json_src.name)
+                copied = True
+        if copied:
+            mark_episode_exported(ep.id)
+            exported += 1
+
+    _update_podcasts_index(str(cbrain_dir))
+    console.print(f"[dim]📊 已同步 [bold]{exported}[/bold] 集到 cbrain ({cbrain_dir})[/dim]")
 
 
 # ── 命令：play ────────────────────────────────────────
