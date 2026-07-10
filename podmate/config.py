@@ -16,10 +16,19 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "model": "nova-2",
         "diarize": True,
     },
+    "translator": {
+        "provider": "hermes",
+    },
     "deepseek": {
         "api_key": "",
         "api_url": "https://api.deepseek.com/v1/chat/completions",
         "model": "deepseek-chat",
+        "temperature": 0.3,
+    },
+    "openai": {
+        "api_key": "",
+        "api_url": "https://api.openai.com/v1/chat/completions",
+        "model": "gpt-4o-mini",
         "temperature": 0.3,
     },
     "dubbing": {

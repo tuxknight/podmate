@@ -1,9 +1,10 @@
-"""PodMate 翻译与摘要模块 — 基于 DeepSeek Chat API。"""
+"""PodMate 翻译与摘要模块 — 多 provider LLM 调用（hermes / deepseek / openai）。"""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 from typing import Any
 
 import httpx
@@ -11,12 +12,23 @@ import httpx
 from .config import get as config_get
 
 
-def _get_api_key() -> str:
-    return config_get("deepseek", "api_key", "")
+def _get_provider() -> str:
+    return config_get("translator", "provider", "hermes")
 
 
-def _get_api_url() -> str:
-    return config_get("deepseek", "api_url", "https://api.deepseek.com/v1/chat/completions")
+def _get_api_key(section: str = "deepseek") -> str:
+    env_key = os.environ.get(f"{section.upper()}_API_KEY", "")
+    if env_key:
+        return env_key
+    return config_get(section, "api_key", "")
+
+
+def _get_api_url(section: str = "deepseek") -> str:
+    _defaults = {
+        "deepseek": "https://api.deepseek.com/v1/chat/completions",
+        "openai": "https://api.openai.com/v1/chat/completions",
+    }
+    return config_get(section, "api_url", _defaults.get(section, ""))
 
 
 _BATCH_SIZE = 20  # 每批处理的段落数
@@ -51,11 +63,23 @@ async def translate_segments(
     if episode_id is not None:
         update_episode_status(episode_id, "translating", progress=0.0)
 
-    api_key = _get_api_key()
-    if not api_key:
-        raise RuntimeError(
-            "未设置 DeepSeek API key。\n请运行: podmate config set deepseek.api_key 'your_key_here'"
-        )
+    provider = _get_provider()
+    api_key = ""
+    if provider == "hermes":
+        api_key = os.environ.get("HERMES_API_KEY", "")
+        if not api_key:
+            raise RuntimeError(
+                "未设置 HERMES_API_KEY 环境变量。\n请设置: export HERMES_API_KEY='your_key_here'"
+            )
+    elif provider in ("deepseek", "openai"):
+        api_key = _get_api_key(provider)
+        if not api_key:
+            raise RuntimeError(
+                f"未设置 {provider} API key。\n"
+                f"请运行: podmate config set {provider}.api_key 'your_key_here'"
+            )
+    else:
+        raise ValueError(f"不支持的翻译 provider: {provider}，可选: hermes, deepseek, openai")
 
     if not segments:
         raise ValueError("转写段落为空，无法翻译")
@@ -69,8 +93,7 @@ async def translate_segments(
     speaker_mapping: dict[str, str] = {}
     first_batch = segments[: min(batch_size, len(segments))]
     first_text = "\n".join(
-        f"[{s['id']}][Speaker {s.get('speaker', '?')}] {s['text']}"
-        for s in first_batch
+        f"[{s['id']}][Speaker {s.get('speaker', '?')}] {s['text']}" for s in first_batch
     )
 
     analysis_prompt = (
@@ -88,7 +111,7 @@ async def translate_segments(
         "SPEAKER_MAP: A=Real Name, B=Real Name, ..."
     )
 
-    analysis_result = await _call_deepseek(
+    analysis_result = await _call_llm(
         analysis_prompt,
         system_role="你是一个播客分析专家。用中文简洁回复。",
     )
@@ -98,6 +121,7 @@ async def translate_segments(
 
     # 提取说话人映射
     import re as _re
+
     map_match = _re.search(r"SPEAKER_MAP:\s*(.+)", analysis_text, _re.IGNORECASE)
     if map_match:
         map_part = map_match.group(1)
@@ -134,7 +158,7 @@ async def translate_segments(
             f"{batch_text}"
         )
 
-        result = await _call_deepseek(user_prompt, system_role=system_msg)
+        result = await _call_llm(user_prompt, system_role=system_msg)
 
         # 解析返回的翻译结果
         content = result.get("content", "")
@@ -142,7 +166,9 @@ async def translate_segments(
             seg_id = s["id"]
             zh_text, tone = _extract_translation(content, seg_id)
             raw_speaker = s.get("speaker", "")
-            display_speaker = speaker_mapping.get(raw_speaker.upper(), raw_speaker) if raw_speaker else ""
+            display_speaker = (
+                speaker_mapping.get(raw_speaker.upper(), raw_speaker) if raw_speaker else ""
+            )
             translated_segments.append(
                 {
                     "id": seg_id,
@@ -211,7 +237,7 @@ async def generate_summary(
         "- 要点3\n"
     )
 
-    result = await _call_deepseek(prompt, system_role="你是一个播客内容分析专家。用中文回复。")
+    result = await _call_llm(prompt, system_role="你是一个播客内容分析专家。用中文回复。")
 
     content = result.get("content", "")
     return _parse_summary(content)
@@ -220,12 +246,12 @@ async def generate_summary(
 # ── API 调用 ────────────────────────────────────────
 
 
-async def _call_deepseek(
+async def _call_llm(
     user_prompt: str,
     system_role: str = "",
     temperature: float | None = None,
 ) -> dict[str, Any]:
-    """调用 DeepSeek Chat API。
+    """通用 LLM API 调用，根据 translator.provider 路由到不同后端。
 
     Args:
         user_prompt: 用户提示。
@@ -235,21 +261,39 @@ async def _call_deepseek(
     Returns:
         dict 含 {"content": "...", "model": "...", "usage": {...}}。
     """
+    provider = _get_provider()
+
+    if provider == "hermes":
+        api_key = os.environ.get("HERMES_API_KEY", "")
+        api_url = os.environ.get("HERMES_BASE_URL", "https://api.hermes.ai/v1/chat/completions")
+        model = "deepseek-chat"
+        if temperature is None:
+            temperature = 0.3
+    elif provider in ("deepseek", "openai"):
+        api_key = _get_api_key(provider)
+        api_url = _get_api_url(provider)
+        model = config_get(
+            provider,
+            "model",
+            "deepseek-chat" if provider == "deepseek" else "gpt-4o-mini",
+        )
+        if temperature is None:
+            temperature = config_get(provider, "temperature", 0.3)
+    else:
+        raise ValueError(f"不支持的翻译 provider: {provider}，可选: hermes, deepseek, openai")
+
     messages = []
     if system_role:
         messages.append({"role": "system", "content": system_role})
     messages.append({"role": "user", "content": user_prompt})
 
     headers = {
-        "Authorization": f"Bearer {_get_api_key()}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
-    if temperature is None:
-        temperature = config_get("deepseek", "temperature", 0.3)
-
     payload = {
-        "model": "deepseek-chat",
+        "model": model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": 4096,
@@ -260,7 +304,7 @@ async def _call_deepseek(
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    _get_api_url(),
+                    api_url,
                     headers=headers,
                     json=payload,
                 )
@@ -277,14 +321,12 @@ async def _call_deepseek(
         except httpx.HTTPStatusError as e:
             last_error = e
             if e.response.status_code == 429:
-                # 限流，重试
                 wait = _RETRY_DELAY * (2**attempt)
                 await asyncio.sleep(wait)
                 continue
             elif e.response.status_code in (400, 401, 403):
-                # 认证错误，不重试
                 raise RuntimeError(
-                    f"DeepSeek API 认证失败 (status={e.response.status_code}): "
+                    f"{provider} API 认证失败 (status={e.response.status_code}): "
                     f"{e.response.text[:200]}"
                 )
             else:
@@ -302,7 +344,7 @@ async def _call_deepseek(
                 await asyncio.sleep(_RETRY_DELAY)
                 continue
 
-    raise RuntimeError(f"DeepSeek API 调用失败（已重试 {_MAX_RETRIES} 次）: {last_error}")
+    raise RuntimeError(f"{provider} API 调用失败（已重试 {_MAX_RETRIES} 次）: {last_error}")
 
 
 # ── 辅助函数 ────────────────────────────────────────
@@ -418,8 +460,6 @@ async def _generate_summary_from_batches(
         "- 要点2\n"
     )
 
-    result = await _call_deepseek(
-        prompt, system_role="你是一个播客分析专家。用中文回复，简洁有力。"
-    )
+    result = await _call_llm(prompt, system_role="你是一个播客分析专家。用中文回复，简洁有力。")
 
     return _parse_summary(result.get("content", ""))

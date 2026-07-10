@@ -2956,8 +2956,11 @@ async def test_download_episode_http_error(tmp_path):
 def test_translate_segments_no_api_key():
     """translate_segments raises RuntimeError when no API key configured."""
     segments = [{"id": 0, "start": 0.0, "end": 5.0, "text": "Hello world."}]
-    with patch("podmate.translator._get_api_key", return_value=""):
-        with pytest.raises(RuntimeError, match="未设置 DeepSeek API key"):
+    with (
+        patch("podmate.translator._get_provider", return_value="deepseek"),
+        patch("podmate.translator._get_api_key", return_value=""),
+    ):
+        with pytest.raises(RuntimeError, match="未设置 deepseek API key"):
             import asyncio
 
             asyncio.run(translate_segments(segments))
@@ -2965,7 +2968,10 @@ def test_translate_segments_no_api_key():
 
 def test_translate_segments_empty():
     """translate_segments raises ValueError when segments is empty."""
-    with patch("podmate.translator._get_api_key", return_value="sk-test"):
+    with (
+        patch("podmate.translator._get_provider", return_value="deepseek"),
+        patch("podmate.translator._get_api_key", return_value="sk-test"),
+    ):
         with pytest.raises(ValueError, match="转写段落为空"):
             import asyncio
 
@@ -3046,7 +3052,8 @@ def test_parse_summary_empty():
 
 async def test_translate_segments_success(monkeypatch):
     """translate_segments returns translated segments with mocked API."""
-    monkeypatch.setattr("podmate.translator._get_api_key", lambda: "sk-test")
+    monkeypatch.setattr("podmate.translator._get_provider", lambda: "deepseek")
+    monkeypatch.setattr("podmate.translator._get_api_key", lambda x="deepseek": "sk-test")
 
     segments = [
         {"id": 0, "start": 0.0, "end": 5.0, "text": "Hello world."},
@@ -3061,7 +3068,7 @@ async def test_translate_segments_success(monkeypatch):
         ]
     )
 
-    with patch("podmate.translator._call_deepseek", mock_call):
+    with patch("podmate.translator._call_llm", mock_call):
         result = await translate_segments(segments, batch_size=10)
 
     assert len(result["segments"]) == 2
