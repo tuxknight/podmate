@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """直接翻译 episode 16 已有的 transcript JSON，不跑 pipeline。"""
+
 import asyncio
 import json
 import os
@@ -14,7 +15,12 @@ _env = Path.home() / ".hermes" / ".env"
 if _env.exists():
     for _line in _env.read_text().splitlines():
         _line = _line.strip()
-        if _line and not _line.startswith("#") and "=" in _line and not _line.startswith("WE_UPLOAD"):
+        if (
+            _line
+            and not _line.startswith("#")
+            and "=" in _line
+            and not _line.startswith("WE_UPLOAD")
+        ):
             _k, _v = _line.split("=", 1)
             _v = _v.strip().strip("'\"")
             os.environ.setdefault(_k, _v)
@@ -22,9 +28,9 @@ if _env.exists():
 if "DEEPSEEK_API_KEY" in os.environ and "HERMES_API_KEY" not in os.environ:
     os.environ["HERMES_API_KEY"] = os.environ["DEEPSEEK_API_KEY"]
 
+from podmate.config import get as config_get
+from podmate.db import get_episode, mark_episode_exported, set_episode_path, update_episode_status
 from podmate.translator import translate_segments
-from podmate.config import load, get as config_get
-from podmate.db import get_episode, update_episode_status, set_episode_path, mark_episode_exported
 
 
 async def main():
@@ -80,7 +86,13 @@ async def main():
     print(f"✅ Chinese transcript saved to: {zh_path}")
 
     # Copy EN transcript to cbrain
-    cbrain_dir = Path(config_get("storage", "cbrain_dir", str(Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts")))
+    cbrain_dir = Path(
+        config_get(
+            "storage",
+            "cbrain_dir",
+            str(Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"),
+        )
+    )
     cbrain_dir.mkdir(parents=True, exist_ok=True)
 
     en_md_path = Path(data_dir) / "transcripts" / f"{safe_guid}.md"
@@ -101,7 +113,7 @@ async def main():
     print(f"📝 摘要: {summary[:200]}...")
 
     # Print a preview
-    print(f"\n📋 前 3 段翻译预览:")
+    print("\n📋 前 3 段翻译预览:")
     for s in segs[:3]:
         t = s.get("start", 0)
         mins, secs = int(t // 60), int(t % 60)
