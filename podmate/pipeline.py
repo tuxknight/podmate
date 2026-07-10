@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .config import load as load_config
 from .db import (
     get_episode,
@@ -133,14 +135,23 @@ async def run_pipeline(
 
         # ── 导出到 cbrain ────────────────────────────
         exported_to_cbrain = False
-        cbrain_podcasts = Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
-        if cbrain_podcasts.exists():
-            md_path = Path(transcript_path).with_suffix(".md")
-            if md_path.exists():
-                dest = cbrain_podcasts / md_path.name
-                shutil.copy2(md_path, dest)
-                exported_to_cbrain = True
-                _emit("exported", 1.0, f"已导出到 cbrain: {dest}")
+        cbrain_dir = load_config().get("storage", {}).get("cbrain_dir", "")
+        if cbrain_dir:
+            cbrain_podcasts = Path(os.path.expanduser(cbrain_dir))
+        else:
+            cbrain_podcasts = Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
+
+        md_path = Path(transcript_path).with_suffix(".md")
+        if md_path.exists():
+            cbrain_podcasts.mkdir(parents=True, exist_ok=True)
+            dest = cbrain_podcasts / md_path.name
+            shutil.copy2(md_path, dest)
+            exported_to_cbrain = True
+            _emit("exported", 1.0, f"已导出到 cbrain: {dest}")
+            try:
+                _update_podcasts_index(str(cbrain_podcasts))
+            except Exception:
+                pass
 
         # ── 翻译 ─────────────────────────────────────
         _emit("translating", 0.0, "正在调用 DeepSeek 翻译...")
@@ -197,3 +208,55 @@ async def run_pipeline(
             error_message=str(e),
         )
         raise RuntimeError(f"流水线失败 (ep #{episode_id}): {e}")
+
+
+# ── Podcasts Index ─────────────────────────────────────
+
+
+def _extract_title_from_md(md_path: Path) -> str:
+    """Extract title from .md file: YAML frontmatter → H1 → filename fallback."""
+    text = md_path.read_text(encoding="utf-8")
+
+    if text.startswith("---\n"):
+        parts = text.split("---\n", 2)
+        if len(parts) >= 3:
+            try:
+                fm = yaml.safe_load(parts[1])
+                if isinstance(fm, dict) and fm.get("title"):
+                    return str(fm["title"])
+            except yaml.YAMLError:
+                pass
+
+    for line in text.split("\n"):
+        if line.startswith("# "):
+            return line[2:].strip()
+
+    return md_path.stem
+
+
+def _update_podcasts_index(export_dir: str) -> None:
+    """扫描 export_dir 中的 .md 转写稿，重建 index.md。
+
+    只在实际内容变化时写入，避免不必要的 git 变动。
+    """
+    export_path = Path(export_dir)
+    export_path.mkdir(parents=True, exist_ok=True)
+
+    index_path = export_path / "index.md"
+    md_files = sorted(p for p in export_path.glob("*.md") if p.name != "index.md")
+
+    if not md_files:
+        content = "# 🎙 播客转写稿\n\n暂无转写记录。\n"
+    else:
+        lines = ["# 🎙 播客转写稿", "", "| # | 标题 |", "|---|------|"]
+        for i, md_file in enumerate(md_files, start=1):
+            title = _extract_title_from_md(md_file)
+            lines.append(f"| {i} | [{title}]({md_file.name}) |")
+        content = "\n".join(lines) + "\n"
+
+    if index_path.exists():
+        existing = index_path.read_text(encoding="utf-8")
+        if existing == content:
+            return
+
+    index_path.write_text(content, encoding="utf-8")

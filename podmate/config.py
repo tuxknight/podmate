@@ -34,6 +34,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "storage": {
         "data_dir": str(Path.home() / ".local" / "share" / "podmate"),
         "keep_episodes": 5,
+        "cbrain_dir": str(Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"),
     },
 }
 
