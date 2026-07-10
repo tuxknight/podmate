@@ -407,8 +407,9 @@ def poll(
         console.print("[dim]使用 [cyan]podmate sub <url>[/cyan] 订阅播客[/dim]")
         return
 
-    total_new = 0
-    updated_count = 0
+    total_found = 0
+    added_count = 0
+    feeds_checked = 0
 
     for feed in feeds:
         existing_eps = get_episodes(feed_id=feed.id, limit=99999)
@@ -425,18 +426,18 @@ def poll(
             console.print(f"[yellow]⚠️ {feed.title}: RSS 获取失败 ({e})[/yellow]")
             continue
 
+        feeds_checked += 1
+
         new_episodes = [
             ep for ep in feed_data.get("episodes", []) if ep.get("guid") not in existing_guids
         ]
 
         if new_episodes:
-            updated_count += 1
+            total_found += len(new_episodes)
             console.print(
                 f"🎙️ [bold]{feed.title}[/bold] → 发现 "
                 f"[bold green]{len(new_episodes)}[/bold green] 集新剧集"
             )
-            for i, ep in enumerate(new_episodes, start=1):
-                console.print(f"  [dim]{i}.[/dim] {ep.get('title', '')[:60]}")
 
             if not dry_run:
                 for ep in new_episodes:
@@ -450,7 +451,7 @@ def poll(
                             audio_url=ep.get("audio_url"),
                             duration_sec=ep.get("duration_sec"),
                         )
-                        total_new += 1
+                        added_count += 1
                     except Exception:
                         pass
 
@@ -462,20 +463,25 @@ def poll(
             )
             conn.commit()
 
+    if feeds_checked == 0:
+        return
+
     if dry_run:
-        console.print()
-        console.print(
-            f"[bold]共检查 [cyan]{len(feeds)}[/cyan] 个订阅，"
-            f"[yellow]{updated_count}[/yellow] 个有更新[/bold] "
-            f"[dim](--dry-run 模式，未入库)[/dim]"
-        )
+        if total_found == 0:
+            console.print(r"[dim]\[podmate] 暂无新剧集 (--dry-run)[/dim]")
+        else:
+            console.print(
+                f"[dim]📊 检查 {feeds_checked} 个播客，发现 {total_found} 集新内容 "
+                f"(--dry-run 模式，未入库)[/dim]"
+            )
     else:
-        console.print()
-        console.print(
-            f"[bold green]✅ 共检查 [cyan]{len(feeds)}[/cyan] 个订阅，"
-            f"[yellow]{updated_count}[/yellow] 个有更新，"
-            f"新增 [cyan]{total_new}[/cyan] 集[/bold green]"
-        )
+        if total_found == 0:
+            console.print(r"[dim]\[podmate] 暂无新剧集[/dim]")
+        else:
+            console.print(
+                f"[dim]📊 检查 {feeds_checked} 个播客，发现 {total_found} 集新内容，"
+                f"已入库 {added_count} 集[/dim]"
+            )
 
 
 # ── 命令：unsubscribe ────────────────────────────────

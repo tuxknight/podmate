@@ -1131,9 +1131,8 @@ def test_poll_command_shows_updates():
     assert "Poll Test Podcast" in result.stdout
     assert "发现" in result.stdout
     assert "2" in result.stdout
-    assert "New Episode 1" in result.stdout
-    assert "New Episode 2" in result.stdout
-    assert "新增" in result.stdout
+    assert "📊 检查" in result.stdout
+    assert "已入库" in result.stdout
 
     eps = get_episodes(feed_id=feed.id, limit=9999)
     guids = {ep.guid for ep in eps}
@@ -1186,7 +1185,7 @@ def test_poll_command_dry_run():
     assert result.exit_code == 0
     assert "Dry Run Podcast" in result.stdout
     assert "发现" in result.stdout
-    assert "Would Be New" in result.stdout
+    assert "📊 检查" in result.stdout
     assert "--dry-run" in result.stdout
 
     after_eps = get_episodes(feed_id=feed.id, limit=9999)
@@ -1239,6 +1238,103 @@ def test_poll_command_error_continues():
     eps = get_episodes(feed_id=feed1.id, limit=9999)
     guids = {ep.guid for ep in eps}
     assert "g-new" in guids
+
+
+def test_poll_shows_summary_when_no_new_episodes():
+    """When all feeds are up to date, poll shows zero-changes summary."""
+    feed = add_feed(
+        url="https://example.com/poll-no-new.xml",
+        title="No New Podcast",
+    )
+    add_episode(feed_id=feed.id, guid="existing-1", title="Existing Episode")
+
+    mock_feed_data = {
+        "title": "No New Podcast",
+        "author": "",
+        "description": "",
+        "image_url": "",
+        "link": "",
+        "episodes": [
+            {
+                "title": "Existing Episode",
+                "guid": "existing-1",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+        ],
+    }
+
+    with patch("podmate.cli.parse_feed", return_value=mock_feed_data):
+        result = runner.invoke(app, ["poll"])
+
+    assert result.exit_code == 0
+    assert "[podmate] 暂无新剧集" in result.stdout
+
+
+def test_poll_shows_summary_with_new_episodes():
+    """When new episodes found, poll shows summary line with counts."""
+    feed = add_feed(
+        url="https://example.com/poll-summary.xml",
+        title="Summary Podcast",
+    )
+    add_episode(feed_id=feed.id, guid="old-1", title="Old Episode")
+
+    mock_feed_data = {
+        "title": "Summary Podcast",
+        "author": "",
+        "description": "",
+        "image_url": "",
+        "link": "",
+        "episodes": [
+            {
+                "title": "Old Episode",
+                "guid": "old-1",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+            {
+                "title": "Fresh Episode",
+                "guid": "fresh-1",
+                "description": "",
+                "pub_date": "",
+                "audio_url": "",
+                "duration_sec": 0,
+            },
+        ],
+    }
+
+    with patch("podmate.cli.parse_feed", return_value=mock_feed_data):
+        result = runner.invoke(app, ["poll"])
+
+    assert result.exit_code == 0
+    assert "📊 检查" in result.stdout
+    assert "发现 1 集新内容" in result.stdout
+    assert "已入库 1 集" in result.stdout
+    assert "Summary Podcast" in result.stdout
+
+
+def test_poll_config_interval_default():
+    """Default config has poll.interval_hours = 6."""
+    from podmate.config import load as load_cfg
+
+    cfg = load_cfg()
+    assert cfg["poll"]["interval_hours"] == 6
+
+
+def test_poll_config_interval_custom():
+    """After setting poll.interval_hours, value reads correctly."""
+    from podmate.config import load as load_cfg
+    from podmate.config import set_key
+
+    set_key("poll", "interval_hours", "12")
+    cfg = load_cfg()
+    assert cfg["poll"]["interval_hours"] == "12"
+
+    set_key("poll", "interval_hours", "6")
 
 
 # ── Transcriber: _format_time ─────────────────────────────
