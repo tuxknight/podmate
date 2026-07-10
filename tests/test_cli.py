@@ -2489,7 +2489,7 @@ def test_update_index_with_metadata_empty_fields(tmp_path):
 
     content = tmp_path.joinpath("index.md").read_text()
     # Each missing field should show "—"
-    line = [l for l in content.split("\n") if l.startswith("| 1 |")][0]
+    line = [ln for ln in content.split("\n") if ln.startswith("| 1 |")][0]
     cells = [c.strip() for c in line.split("|")[1:-1]]
     # cells: ['1', title_cell, date, duration, lang_cell, source, description]
     assert cells[2] == "—"  # date

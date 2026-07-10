@@ -12,7 +12,6 @@ import httpx
 
 from .config import get as config_get
 
-
 _HERMES_ENV_LOADED = False
 
 
