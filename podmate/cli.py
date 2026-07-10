@@ -9,6 +9,7 @@ from pathlib import Path
 import typer
 from rich import box
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import IntPrompt
 from rich.table import Table
@@ -708,6 +709,49 @@ def episode(
         title=f"📄 剧集 #{episode_id}",
         border_style="cyan",
     ))
+
+
+# ── 命令：read ────────────────────────────────────────
+
+
+@app.command()
+def read(
+    episode_id: int = typer.Argument(
+        ..., help="要阅读的剧集 ID"
+    ),
+) -> None:
+    """在终端分页阅读转写文字稿。"""
+    ep = get_episode(episode_id)
+    if not ep:
+        console.print(f"[red]❌ 未找到剧集 ID: {episode_id}[/red]")
+        raise typer.Exit(code=1)
+
+    if not ep.transcript_path:
+        console.print("[yellow]📝 该剧集尚未转写[/yellow]")
+        console.print(
+            f"[dim]提示: 先运行 [cyan]podmate download {episode_id}[/cyan] 下载并转写[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    md_path = Path(ep.transcript_path).with_suffix(".md")
+
+    if md_path.is_file():
+        md_content = md_path.read_text()
+        with console.pager(styles=True):
+            console.print(Markdown(md_content))
+    elif Path(ep.transcript_path).is_file():
+        console.print("[yellow]📝 文字稿尚未生成 Markdown 版本[/yellow]")
+        console.print(
+            f"[dim]提示: 重新运行 [cyan]podmate download {episode_id}[/cyan]"
+            f" 以生成 Markdown 文字稿[/dim]"
+        )
+        raise typer.Exit(code=1)
+    else:
+        console.print("[yellow]📝 该剧集尚未转写[/yellow]")
+        console.print(
+            f"[dim]提示: 先运行 [cyan]podmate download {episode_id}[/cyan] 下载并转写[/dim]"
+        )
+        raise typer.Exit(code=1)
 
 
 # ── 命令：show ────────────────────────────────────────

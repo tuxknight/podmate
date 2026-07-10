@@ -1148,6 +1148,86 @@ def test_format_transcript_untitled_fallback():
     assert "# Untitled" in md
 
 
+# ── CLI: read command ───────────────────────────────────────
+
+
+def test_read_command_shows_markdown(tmp_path):
+    """Given episode with .md transcript, read command displays it."""
+    from podmate.db import set_episode_path
+
+    feed = add_feed(
+        url="https://example.com/read-test.xml",
+        title="Read Test Podcast",
+    )
+    ep = add_episode(
+        feed_id=feed.id,
+        guid="read-test-guid",
+        title="Read Test Episode",
+    )
+
+    json_path = tmp_path / "read-test-guid.json"
+    json_path.write_text("{}")
+    md_path = tmp_path / "read-test-guid.md"
+    md_content = "# Test Episode\n\n**语言:** en\n\n---\n\nHello world.\n"
+    md_path.write_text(md_content)
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    result = runner.invoke(app, ["read", str(ep.id)])
+
+    assert result.exit_code == 0
+    assert "Test Episode" in result.stdout
+
+
+def test_read_command_no_transcript():
+    """Given episode without transcript, read shows error."""
+    feed = add_feed(
+        url="https://example.com/read-none.xml",
+        title="No Transcript Podcast",
+    )
+    ep = add_episode(
+        feed_id=feed.id,
+        guid="read-none-guid",
+        title="No Transcript Episode",
+    )
+
+    result = runner.invoke(app, ["read", str(ep.id)])
+
+    assert result.exit_code == 1
+    assert "尚未转写" in result.stdout
+
+
+def test_read_command_no_md_but_has_json(tmp_path):
+    """Given episode with .json but no .md, read prompts to regenerate."""
+    from podmate.db import set_episode_path
+
+    feed = add_feed(
+        url="https://example.com/read-json-only.xml",
+        title="JSON Only Podcast",
+    )
+    ep = add_episode(
+        feed_id=feed.id,
+        guid="read-json-only-guid",
+        title="JSON Only Episode",
+    )
+
+    json_path = tmp_path / "read-json-only-guid.json"
+    json_path.write_text("{}")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    result = runner.invoke(app, ["read", str(ep.id)])
+
+    assert result.exit_code == 1
+    assert "尚未生成 Markdown" in result.stdout
+
+
+def test_read_command_episode_not_found():
+    """Given invalid episode ID, read shows error."""
+    result = runner.invoke(app, ["read", "9999"])
+
+    assert result.exit_code == 1
+    assert "未找到" in result.stdout
+
+
 # ── Pipeline: dual-format transcript save ────────────────
 
 
