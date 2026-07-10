@@ -4,6 +4,7 @@ import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from pathlib import Path
 
 import typer
 from rich import box
@@ -683,7 +684,8 @@ def episode(
 
     paths = [
         ("原声音频", ep.local_path),
-        ("转写文本", ep.transcript_path),
+        ("转写文本 (JSON)", ep.transcript_path),
+        ("转写文稿 (MD)", str(Path(ep.transcript_path).with_suffix(".md")) if ep.transcript_path else None),  # noqa: E501
         ("翻译文本", ep.translation_path),
         ("配音音频", ep.dub_path),
     ]

@@ -10,6 +10,7 @@ from podmate.cli import app
 from podmate.config import load as load_config
 from podmate.db import add_episode, add_feed, get_episodes, get_feed, get_feeds
 from podmate.feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
+from podmate.transcriber import _format_time, format_transcript
 
 runner = CliRunner()
 
@@ -1029,3 +1030,216 @@ def test_poll_command_error_continues():
     eps = get_episodes(feed_id=feed1.id, limit=9999)
     guids = {ep.guid for ep in eps}
     assert "g-new" in guids
+
+
+# ── Transcriber: _format_time ─────────────────────────────
+
+
+def test_format_time_zero():
+    """0 seconds → 00:00:00."""
+    assert _format_time(0) == "00:00:00"
+
+
+def test_format_time_under_one_minute():
+    """59 seconds → 00:00:59."""
+    assert _format_time(59) == "00:00:59"
+
+
+def test_format_time_one_hour_one_second():
+    """3661 seconds → 01:01:01."""
+    assert _format_time(3661) == "01:01:01"
+
+
+def test_format_time_many_hours():
+    """7384 seconds → 02:03:04."""
+    assert _format_time(7384) == "02:03:04"
+
+
+# ── Transcriber: format_transcript ───────────────────────
+
+
+def _make_result(segments, language="en", duration_sec=120.0):
+    """Build a minimal transcript result dict."""
+    return {
+        "text": " ".join(s.get("text", "") for s in segments),
+        "segments": segments,
+        "language": language,
+        "duration_sec": duration_sec,
+    }
+
+
+def test_format_transcript_with_speakers():
+    """Multiple speakers → markdown with time ranges and speaker labels."""
+    segments = [
+        {"id": 0, "start": 1.0, "end": 15.0, "text": "Hello everyone.", "speaker": "A"},
+        {"id": 1, "start": 16.0, "end": 62.0, "text": "Hi there, welcome to the show.", "speaker": "B"},  # noqa: E501
+        {"id": 2, "start": 63.0, "end": 105.0, "text": "Today we discuss technology.", "speaker": "A"},  # noqa: E501
+    ]
+    result = _make_result(segments, duration_sec=105.0)
+
+    md = format_transcript(result, title="Test Episode")
+
+    assert "# Test Episode" in md
+    assert "**语言:** en" in md
+    assert "**时长:** 2 分钟" in md
+    assert "**说话人:** 2" in md
+    assert "## 文字稿" in md
+    assert "**[00:00:01 → 00:00:15] 说话人 A**" in md
+    assert "Hello everyone." in md
+    assert "**[00:00:16 → 00:01:02] 说话人 B**" in md
+    assert "Hi there, welcome to the show." in md
+    assert "**[00:01:03 → 00:01:45] 说话人 A**" in md
+    assert "Today we discuss technology." in md
+    assert "*由 PodMate 自动转写 (Deepgram nova-2)*" in md
+
+
+def test_format_transcript_merges_consecutive_same_speaker():
+    """Consecutive same-speaker segments are merged into one block."""
+    segments = [
+        {"id": 0, "start": 0.0, "end": 5.0, "text": "Part one.", "speaker": "A"},
+        {"id": 1, "start": 5.0, "end": 10.0, "text": "Part two.", "speaker": "A"},
+        {"id": 2, "start": 10.0, "end": 15.0, "text": "Part three.", "speaker": "B"},
+    ]
+    result = _make_result(segments, duration_sec=15.0)
+
+    md = format_transcript(result)
+
+    # Speaker A's two segments merged: one time block, combined text
+    assert "**[00:00:00 → 00:00:10] 说话人 A**" in md
+    assert "Part one. Part two." in md
+    # Speaker B separate
+    assert "**[00:00:10 → 00:00:15] 说话人 B**" in md
+    assert "Part three." in md
+
+
+def test_format_transcript_single_speaker():
+    """Segments with no speaker field → unified output."""
+    segments = [
+        {"id": 0, "start": 0.0, "end": 30.0, "text": "Monologue part one."},
+        {"id": 1, "start": 30.0, "end": 60.0, "text": "Monologue part two."},
+    ]
+    result = _make_result(segments, duration_sec=60.0)
+
+    md = format_transcript(result, title="Solo Show")
+
+    assert "**说话人:** 1" in md
+    assert "**时长:** 1 分钟" in md
+    # No speaker field → defaults to "?"
+    assert "说话人 ?" in md
+
+
+def test_format_transcript_empty_segments():
+    """Empty segments list → placeholder message."""
+    result = _make_result([], duration_sec=0)
+
+    md = format_transcript(result)
+
+    assert "*无转写内容*" in md
+    assert "**说话人:** 0" in md
+    assert "**时长:** 0 分钟" in md
+
+
+def test_format_transcript_untitled_fallback():
+    """No title → 'Untitled'."""
+    result = _make_result([], duration_sec=0)
+
+    md = format_transcript(result)
+
+    assert "# Untitled" in md
+
+
+# ── Pipeline: dual-format transcript save ────────────────
+
+
+def test_pipeline_saves_markdown_alongside_json(tmp_path, monkeypatch):
+    """After transcription, both .json and .md files exist."""
+    import asyncio
+    import json
+    import os
+
+    from podmate.db import add_episode, add_feed, set_episode_path, update_episode_status
+
+    # Mock config to use tmp_path
+    test_cfg = {
+        "deepgram": {"api_key": "test-key", "api_url": "https://api.example.com/v1/listen", "model": "nova-2", "diarize": True},  # noqa: E501
+        "deepseek": {"api_key": "sk-test", "api_url": "https://api.example.com/v1", "model": "test", "temperature": 0.3},  # noqa: E501
+        "dubbing": {"voice": "test-voice", "rate": "1.0", "volume": "1.0"},
+        "podcast_index": {"api_key": "", "api_secret": ""},
+        "storage": {"data_dir": str(tmp_path), "keep_episodes": 5},
+    }
+    monkeypatch.setattr("podmate.pipeline.DATA_DIR", str(tmp_path))
+
+    import podmate.config as config_mod
+    monkeypatch.setattr(config_mod, "_config", test_cfg)
+
+    # Set up test DB
+    feed = add_feed(url="https://example.com/pipeline-test.xml", title="Pipeline Test")
+    ep = add_episode(
+        feed_id=feed.id,
+        guid="pipeline-test-guid",
+        title="Pipeline Test Episode",
+        audio_url="https://example.com/audio.mp3",
+    )
+
+    episodes_dir = os.path.join(str(tmp_path), "episodes")
+    transcripts_dir = os.path.join(str(tmp_path), "transcripts")
+    translations_dir = os.path.join(str(tmp_path), "translations")
+    dubs_dir = os.path.join(str(tmp_path), "dubs")
+    for d in [episodes_dir, transcripts_dir, translations_dir, dubs_dir]:
+        os.makedirs(d, exist_ok=True)
+
+    # Create fake audio file (skip download)
+    audio_path = os.path.join(episodes_dir, "pipeline-test-guid.mp3")
+    with open(audio_path, "wb") as f:
+        f.write(b"\x00" * 2048)
+    set_episode_path(ep.id, "local_path", audio_path)
+    update_episode_status(ep.id, "downloaded", progress=1.0)
+
+    # Mock Deepgram response
+    mock_transcript = {
+        "text": "Hello world. This is a test.",
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 2.0, "text": "Hello world.", "speaker": "A"},
+            {"id": 1, "start": 2.0, "end": 5.0, "text": "This is a test.", "speaker": "B"},
+        ],
+        "language": "en",
+        "duration_sec": 5.0,
+    }
+
+    # Mock translation (needed since pipeline continues past transcription)
+    mock_translation = {
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 2.0, "zh": "你好世界。", "speaker": "A", "text": "Hello world."},  # noqa: E501
+            {"id": 1, "start": 2.0, "end": 5.0, "zh": "这是一个测试。", "speaker": "B", "text": "This is a test."},  # noqa: E501
+        ],
+        "summary_zh": "测试摘要",
+    }
+
+    from podmate.pipeline import run_pipeline
+
+    with patch("podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)), \
+         patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)), \
+         patch("podmate.pipeline.dub_translation", new=AsyncMock(return_value=os.path.join(dubs_dir, "pipeline-test-guid.mp3"))):  # noqa: E501
+        result = asyncio.run(run_pipeline(ep.id, skip_dub=False))
+
+    json_path = os.path.join(transcripts_dir, "pipeline-test-guid.json")
+    md_path = os.path.join(transcripts_dir, "pipeline-test-guid.md")
+
+    assert os.path.isfile(json_path), f"JSON transcript missing: {json_path}"
+    assert os.path.isfile(md_path), f"Markdown transcript missing: {md_path}"
+
+    # Verify JSON content
+    with open(json_path) as f:
+        saved_json = json.load(f)
+    assert saved_json["text"] == "Hello world. This is a test."
+    assert len(saved_json["segments"]) == 2
+
+    # Verify Markdown content
+    with open(md_path) as f:
+        md_content = f.read()
+    assert "# Pipeline Test Episode" in md_content
+    assert "**[00:00:00 → 00:00:02] 说话人 A**" in md_content
+    assert "Hello world." in md_content
+    assert "说话人 B" in md_content
+
+    assert result["transcript_path"] == json_path

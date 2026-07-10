@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import Any
 
 from .config import load as load_config
@@ -14,7 +15,7 @@ from .db import (
 )
 from .downloader import download_episode
 from .dubbing import dub_translation
-from .transcriber import transcribe_via_deepgram
+from .transcriber import format_transcript, transcribe_via_deepgram
 from .translator import translate_segments
 
 DATA_DIR = os.path.expanduser(load_config()["storage"]["data_dir"])
@@ -112,9 +113,14 @@ async def run_pipeline(
 
         result = await transcribe_via_deepgram(audio_path, episode_id=episode_id)
 
-        # 保存转写结果
+        # 保存转写结果（JSON + Markdown 双格式）
         with open(transcript_path, "w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
+
+        readable_path = str(Path(transcript_path).with_suffix(".md"))
+        readable_content = format_transcript(result, title=ep.title)
+        with open(readable_path, "w", encoding="utf-8") as f:
+            f.write(readable_content)
 
         set_episode_path(episode_id, "transcript_path", transcript_path)
         update_episode_status(episode_id, "transcribed", progress=1.0)

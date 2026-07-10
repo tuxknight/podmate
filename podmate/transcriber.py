@@ -251,3 +251,86 @@ def _parse_deepgram_response(data: dict[str, Any]) -> dict[str, Any]:
         "language": language,
         "duration_sec": duration,
     }
+
+
+# ── 结构化文字稿格式化 ──────────────────────────────
+
+
+def _format_time(seconds: float) -> str:
+    """将秒数格式化为 HH:MM:SS。"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = int(seconds % 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def format_transcript(result: dict[str, Any], title: str = "") -> str:
+    """将转写结果格式化为 Markdown 文字稿。
+
+    合并同一说话人的连续段落，生成带时间轴和说话人标签的可读文稿。
+    """
+    segments = result.get("segments", [])
+    language = result.get("language", "?")
+    duration_sec = result.get("duration_sec", 0)
+
+    duration_min = round(duration_sec / 60)
+    speakers = {s.get("speaker", "?") for s in segments}
+    speaker_count = len(speakers)
+
+    lines: list[str] = []
+    display_title = title or "Untitled"
+
+    lines.append(f"# {display_title}")
+    lines.append("")
+    lines.append(
+        f"**语言:** {language} | **时长:** {duration_min} 分钟"
+        f" | **说话人:** {speaker_count}"
+    )
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    lines.append("## 文字稿")
+    lines.append("")
+
+    if not segments:
+        lines.append("*无转写内容*")
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+        lines.append("*由 PodMate 自动转写 (Deepgram nova-2)*")
+        return "\n".join(lines)
+
+    # 合并同一说话人的连续段落
+    merged: list[dict[str, Any]] = []
+    for seg in segments:
+        speaker = seg.get("speaker", "?")
+        text = seg.get("text", "").strip()
+        start = seg.get("start", 0.0)
+        end = seg.get("end", 0.0)
+
+        if merged and merged[-1]["speaker"] == speaker:
+            merged[-1]["text"] += " " + text
+            merged[-1]["end"] = end
+        else:
+            merged.append({
+                "speaker": speaker,
+                "text": text,
+                "start": start,
+                "end": end,
+            })
+
+    for seg in merged:
+        start_str = _format_time(seg["start"])
+        end_str = _format_time(seg["end"])
+        speaker = seg["speaker"]
+        text = seg["text"]
+
+        lines.append(f"**[{start_str} → {end_str}] 说话人 {speaker}**")
+        lines.append(text)
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("*由 PodMate 自动转写 (Deepgram nova-2)*")
+
+    return "\n".join(lines)
