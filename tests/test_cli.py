@@ -20,7 +20,7 @@ from podmate.db import (
     set_episode_path,
 )
 from podmate.feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
-from podmate.transcriber import _format_time, format_transcript
+from podmate.transcriber import _add_tone_markers, _format_time, format_transcript
 
 runner = CliRunner()
 
@@ -1156,6 +1156,82 @@ def test_format_transcript_untitled_fallback():
     md = format_transcript(result)
 
     assert "# Untitled" in md
+
+
+# ── Transcriber: _add_tone_markers ──────────────────────
+
+
+def test_tone_marker_laugh():
+    """Detects (laughs) and replaces with [笑声]."""
+    assert _add_tone_markers("That is hilarious (laughs)") == "That is hilarious [笑声]"
+
+
+def test_tone_marker_laughter():
+    """Detects (laughter) and replaces with [笑声]."""
+    assert _add_tone_markers("(laughter) Welcome everyone") == "Welcome everyone [笑声]"
+
+
+def test_tone_marker_applause():
+    """Detects (applause) and replaces with [掌声]."""
+    assert _add_tone_markers("Thank you (applause)") == "Thank you [掌声]"
+
+
+def test_tone_marker_music():
+    """Detects (music) and replaces with [音乐]."""
+    assert _add_tone_markers("(music) Opening theme") == "Opening theme [音乐]"
+
+
+def test_tone_marker_chuckles():
+    """Detects (chuckles) and replaces with [轻笑]."""
+    assert _add_tone_markers("That was funny (chuckles)") == "That was funny [轻笑]"
+
+
+def test_tone_marker_brackets():
+    """Detects bracket-form [laughs] and [applause]."""
+    assert _add_tone_markers("So funny [laughs]") == "So funny [笑声]"
+    assert _add_tone_markers("[applause] Great") == "Great [掌声]"
+
+
+def test_tone_marker_music_bracket():
+    """Detects [Music] with capital M."""
+    assert _add_tone_markers("[Music] Intro") == "Intro [音乐]"
+
+
+def test_tone_marker_no_marker():
+    """Text without tone markers is unchanged."""
+    assert _add_tone_markers("Hello world, this is a test.") == "Hello world, this is a test."
+
+
+def test_tone_marker_removes_original():
+    """Original tone text is removed, only Chinese marker remains."""
+    result = _add_tone_markers("We have a great guest (applause) today")
+    assert "(applause)" not in result
+    assert "[掌声]" in result
+
+
+def test_tone_marker_multiple():
+    """Multiple markers all appended."""
+    result = _add_tone_markers("(laughter) Hello (applause)")
+    assert "(laughter)" not in result
+    assert "(applause)" not in result
+    assert "[笑声]" in result
+    assert "[掌声]" in result
+
+
+def test_format_transcript_with_tone_markers():
+    """format_transcript applies tone markers to segment text."""
+    segments = [
+        {"id": 0, "start": 0.0, "end": 15.0, "text": "Welcome to the show (applause)", "speaker": "A"},  # noqa: E501
+        {"id": 1, "start": 16.0, "end": 62.0, "text": "Thanks, that's hilarious (laughs)", "speaker": "B"},  # noqa: E501
+    ]
+    result = _make_result(segments, duration_sec=62.0)
+
+    md = format_transcript(result, title="Tone Test")
+
+    assert "Welcome to the show [掌声]" in md
+    assert "Thanks, that's hilarious [笑声]" in md
+    assert "(applause)" not in md
+    assert "(laughs)" not in md
 
 
 # ── CLI: read command ───────────────────────────────────────

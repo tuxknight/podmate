@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 # 在 RPi 上 HuggingFace Hub 下载模型经常 SSL 错误，使用国内镜像
@@ -255,6 +256,37 @@ def _parse_deepgram_response(data: dict[str, Any]) -> dict[str, Any]:
 
 # ── 结构化文字稿格式化 ──────────────────────────────
 
+_TONE_PATTERNS = [
+    (r"\(laughs\)", "[笑声]"),
+    (r"\[laughs\]", "[笑声]"),
+    (r"\(laughter\)", "[笑声]"),
+    (r"\[laughter\]", "[笑声]"),
+    (r"\(chuckles\)", "[轻笑]"),
+    (r"\[chuckles\]", "[轻笑]"),
+    (r"\(applause\)", "[掌声]"),
+    (r"\[applause\]", "[掌声]"),
+    (r"\(music\)", "[音乐]"),
+    (r"\[music\]", "[音乐]"),
+    (r"\[Music\]", "[音乐]"),
+]
+
+
+def _add_tone_markers(text: str) -> str:
+    """Detect tone markers in text and replace with Chinese notation."""
+    result = text
+    markers: list[str] = []
+    for pattern, marker in _TONE_PATTERNS:
+        if re.search(pattern, result):
+            result = re.sub(pattern, "", result)
+            if marker not in markers:
+                markers.append(marker)
+    result = result.strip()
+    # Clean up double spaces left by removed markers
+    result = re.sub(r"  +", " ", result)
+    if markers:
+        result += " " + "".join(markers)
+    return result.strip()
+
 
 def _format_time(seconds: float) -> str:
     """将秒数格式化为 HH:MM:SS。"""
@@ -323,7 +355,7 @@ def format_transcript(result: dict[str, Any], title: str = "") -> str:
         start_str = _format_time(seg["start"])
         end_str = _format_time(seg["end"])
         speaker = seg["speaker"]
-        text = seg["text"]
+        text = _add_tone_markers(seg["text"])
 
         lines.append(f"**[{start_str} → {end_str}] 说话人 {speaker}**")
         lines.append(text)
