@@ -31,6 +31,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "api_key": "",
         "api_secret": "",
     },
+    "poll": {
+        "interval_hours": 6,
+    },
     "storage": {
         "data_dir": str(Path.home() / ".local" / "share" / "podmate"),
         "keep_episodes": 5,
