@@ -1,6 +1,7 @@
 """PodMate CLI — 终端里的播客伴侣。"""
 
 import asyncio
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -30,6 +31,7 @@ from .db import (
     init_db,
 )
 from .feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
+from .transcriber import _format_time
 
 DATA_SUBDIRS = ["episodes", "transcripts", "translations", "dubs"]
 
@@ -754,6 +756,43 @@ def read(
         raise typer.Exit(code=1)
 
 
+# ── 命令：search ──────────────────────────────────────
+
+
+@app.command()
+def search(
+    keyword: str = typer.Argument(
+        ..., help="搜索关键词"
+    ),
+) -> None:
+    """在所有已转写剧集中搜索关键词。"""
+    results = _search_transcripts(keyword)
+
+    if not results:
+        console.print(f"[yellow]🔍 未找到匹配结果: \"{keyword}\"[/yellow]")
+        return
+
+    total_matches = sum(r["match_count"] for r in results)
+    episodes_searched = len(results)
+
+    for r in results:
+        console.print(
+            f"\n[bold]📻 {r['feed_title']} → {r['episode_title']}[/bold]"
+        )
+        console.print(f"  [dim]→ 找到 {r['match_count']} 处匹配[/dim]\n")
+
+        for m in r["snippets"]:
+            time_str = _format_time(m["start"])
+            console.print(
+                f"  [说话人 {m['speaker']}] [{time_str}] {m['snippet']}"
+            )
+
+    console.print(
+        f"\n[dim]共搜索 {episodes_searched} 个剧集，"
+        f"总计 {total_matches} 处匹配[/dim]"
+    )
+
+
 # ── 命令：show ────────────────────────────────────────
 
 
@@ -1132,6 +1171,68 @@ def _format_duration(seconds: int) -> str:
     if h > 0:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
+
+
+def _search_transcripts(keyword: str) -> list[dict]:
+    """Search all episode transcripts for keyword (case-insensitive).
+
+    Returns list sorted by match_count descending, each with:
+        {feed_title, episode_title, match_count, snippets: [{speaker, start, snippet}]}
+    Max 3 snippets per episode.
+    """
+    keyword_lower = keyword.lower()
+    episodes = get_episodes(limit=99999)
+    results: list[dict] = []
+
+    for ep in episodes:
+        if not ep.transcript_path:
+            continue
+        if not os.path.isfile(ep.transcript_path):
+            continue
+
+        try:
+            with open(ep.transcript_path) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        segments = data.get("segments", [])
+        snippets: list[dict] = []
+        match_count = 0
+
+        for seg in segments:
+            text = seg.get("text", "")
+            pos = text.lower().find(keyword_lower)
+            if pos == -1:
+                continue
+
+            match_count += 1
+
+            if len(snippets) < 3:
+                start_idx = max(0, pos - 60)
+                end_idx = min(len(text), pos + len(keyword) + 60)
+                snippet = text[start_idx:end_idx]
+                if start_idx > 0:
+                    snippet = "..." + snippet
+                if end_idx < len(text):
+                    snippet = snippet + "..."
+
+                snippets.append({
+                    "speaker": seg.get("speaker", "?"),
+                    "start": seg.get("start", 0),
+                    "snippet": snippet,
+                })
+
+        if match_count > 0:
+            results.append({
+                "feed_title": ep.feed_title or "Unknown",
+                "episode_title": ep.title,
+                "match_count": match_count,
+                "snippets": snippets,
+            })
+
+    results.sort(key=lambda r: r["match_count"], reverse=True)
+    return results
 
 
 def _show_search_table(keyword: str, results: list) -> None:

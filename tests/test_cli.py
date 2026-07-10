@@ -1,6 +1,8 @@
 """Tests for PodMate CLI commands and underlying functions."""
 
 import hashlib
+import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -8,7 +10,7 @@ from typer.testing import CliRunner
 
 from podmate.cli import app
 from podmate.config import load as load_config
-from podmate.db import add_episode, add_feed, get_episodes, get_feed, get_feeds
+from podmate.db import add_episode, add_feed, get_episodes, get_feed, get_feeds, set_episode_path
 from podmate.feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
 from podmate.transcriber import _format_time, format_transcript
 
@@ -1323,3 +1325,120 @@ def test_pipeline_saves_markdown_alongside_json(tmp_path, monkeypatch):
     assert "说话人 B" in md_content
 
     assert result["transcript_path"] == json_path
+
+
+# ── CLI: search command ──────────────────────────────────────
+
+
+def _make_transcript_json(path, segments):
+    """Write a transcript JSON file with given segments."""
+    data = {
+        "text": " ".join(s.get("text", "") for s in segments),
+        "segments": segments,
+        "language": "en",
+        "duration_sec": sum(s.get("end", 0) for s in segments),
+    }
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(data, f)
+
+
+def test_search_finds_matching_episodes(tmp_path):
+    """Search finds keyword in transcript segments and displays results."""
+    feed = add_feed(url="https://example.com/search-test.xml", title="Search Podcast")
+    ep = add_episode(feed_id=feed.id, guid="search-ep-1", title="Search Episode")
+
+    json_path = str(tmp_path / "search-ep-1.json")
+    _make_transcript_json(json_path, [
+        {"id": 0, "start": 0.0, "end": 5.0, "text": "Hello welcome to kubernetes podcast.", "speaker": "A"},  # noqa: E501
+        {"id": 1, "start": 5.0, "end": 10.0, "text": "Yes kubernetes is great for scaling apps.", "speaker": "B"},  # noqa: E501
+    ])
+    set_episode_path(ep.id, "transcript_path", json_path)
+
+    result = runner.invoke(app, ["search", "kubernetes"])
+
+    assert result.exit_code == 0
+    assert "Search Podcast" in result.stdout
+    assert "Search Episode" in result.stdout
+    assert "找到 2 处匹配" in result.stdout
+    assert "kubernetes podcast" in result.stdout
+    assert "kubernetes is great" in result.stdout
+    assert "说话人 A" in result.stdout
+    assert "说话人 B" in result.stdout
+    assert "总计 2 处匹配" in result.stdout
+
+
+def test_search_no_matches(tmp_path):
+    """Search with no matching keyword shows 'not found' message."""
+    feed = add_feed(url="https://example.com/search-none.xml", title="No Match Podcast")
+    ep = add_episode(feed_id=feed.id, guid="search-none-ep", title="No Match Episode")
+
+    json_path = str(tmp_path / "search-none-ep.json")
+    _make_transcript_json(json_path, [
+        {"id": 0, "start": 0.0, "end": 5.0, "text": "Hello world this is a test.", "speaker": "A"},
+    ])
+    set_episode_path(ep.id, "transcript_path", json_path)
+
+    result = runner.invoke(app, ["search", "kubernetes"])
+
+    assert result.exit_code == 0
+    assert "未找到匹配结果" in result.stdout
+
+
+def test_search_no_transcripts():
+    """Search with no episodes having transcript files exits gracefully."""
+    feed = add_feed(url="https://example.com/search-no-trans.xml", title="No Trans Podcast")
+    add_episode(feed_id=feed.id, guid="no-trans-ep", title="No Trans Episode")
+    # No transcript_path set
+
+    result = runner.invoke(app, ["search", "anything"])
+
+    assert result.exit_code == 0
+    assert "未找到匹配结果" in result.stdout
+
+
+def test_search_case_insensitive(tmp_path):
+    """Search is case-insensitive — 'KUBERNETES' matches 'kubernetes'."""
+    feed = add_feed(url="https://example.com/search-case.xml", title="Case Podcast")
+    ep = add_episode(feed_id=feed.id, guid="case-ep", title="Case Episode")
+
+    json_path = str(tmp_path / "case-ep.json")
+    _make_transcript_json(json_path, [
+        {"id": 0, "start": 0.0, "end": 5.0, "text": "We use Kubernetes in production.", "speaker": "A"},  # noqa: E501
+    ])
+    set_episode_path(ep.id, "transcript_path", json_path)
+
+    result = runner.invoke(app, ["search", "kubernetes"])
+
+    assert result.exit_code == 0
+    assert "找到 1 处匹配" in result.stdout
+    # Also test uppercase
+    result2 = runner.invoke(app, ["search", "KUBERNETES"])
+    assert result2.exit_code == 0
+    assert "找到 1 处匹配" in result2.stdout
+
+
+def test_search_limits_snippets_per_episode(tmp_path):
+    """Max 3 snippets displayed per episode, but total count is accurate."""
+    feed = add_feed(url="https://example.com/search-limit.xml", title="Limit Podcast")
+    ep = add_episode(feed_id=feed.id, guid="limit-ep", title="Limit Episode")
+
+    json_path = str(tmp_path / "limit-ep.json")
+    _make_transcript_json(json_path, [
+        {"id": 0, "start": 10.0, "end": 15.0, "text": "First mention of kubernetes here.", "speaker": "A"},  # noqa: E501
+        {"id": 1, "start": 20.0, "end": 25.0, "text": "Second kubernetes reference in text.", "speaker": "A"},  # noqa: E501
+        {"id": 2, "start": 30.0, "end": 35.0, "text": "Third kubernetes mention right here.", "speaker": "B"},  # noqa: E501
+        {"id": 3, "start": 40.0, "end": 45.0, "text": "Fourth kubernetes mention hidden.", "speaker": "B"},  # noqa: E501
+    ])
+    set_episode_path(ep.id, "transcript_path", json_path)
+
+    result = runner.invoke(app, ["search", "kubernetes"])
+
+    assert result.exit_code == 0
+    # Total match count shows 4, but only 3 snippets displayed
+    assert "找到 4 处匹配" in result.stdout
+    assert "First mention of kubernetes" in result.stdout
+    assert "Second kubernetes reference" in result.stdout
+    assert "Third kubernetes mention" in result.stdout
+    assert "Fourth kubernetes mention" not in result.stdout
+    assert "总计 4 处匹配" in result.stdout
