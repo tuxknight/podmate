@@ -2373,19 +2373,20 @@ def test_update_index_empty_dir(tmp_path):
 
 
 def test_update_index_with_files(tmp_path):
-    """Directory with .md files generates correct table."""
+    """Directory with .md files generates correct table with metadata columns."""
     from podmate.pipeline import _update_podcasts_index
 
     (tmp_path / "ep1.md").write_text("# Episode One\n\nContent.\n")
     (tmp_path / "ep2.md").write_text("# Episode Two\n\nContent.\n")
 
-    _update_podcasts_index(str(tmp_path))
+    with patch("podmate.pipeline._extract_episode_meta", return_value={}):
+        _update_podcasts_index(str(tmp_path))
 
     index_md = tmp_path / "index.md"
     content = index_md.read_text()
-    assert "| # | 标题 | 语言 | 来源播客 |" in content
-    assert "**Episode One**" in content
-    assert "**Episode Two**" in content
+    assert "| # | 标题 | 日期 | 时长 | 语言 | 来源 | 简介 |" in content
+    assert "[**Episode One**](ep1.md)" in content
+    assert "[**Episode Two**](ep2.md)" in content
     assert "🇬🇧 英文" in content
     # ep1 comes first (sorted)
     assert content.index("Episode One") < content.index("Episode Two")
@@ -2398,10 +2399,11 @@ def test_update_index_excludes_self(tmp_path):
     (tmp_path / "ep1.md").write_text("# Ep One\n\nContent.\n")
     (tmp_path / "index.md").write_text("old index")
 
-    _update_podcasts_index(str(tmp_path))
+    with patch("podmate.pipeline._extract_episode_meta", return_value={}):
+        _update_podcasts_index(str(tmp_path))
 
     content = tmp_path.joinpath("index.md").read_text()
-    assert "**Ep One**" in content
+    assert "[**Ep One**](ep1.md)" in content
     assert "🇬🇧 英文" in content
     # Should not link to itself
     assert "index.md" not in content.replace(" ", "").replace("|", "").replace("-", "")
@@ -2413,12 +2415,14 @@ def test_update_index_no_write_when_unchanged(tmp_path):
 
     (tmp_path / "ep1.md").write_text("# Ep One\n\nContent.\n")
 
-    _update_podcasts_index(str(tmp_path))
+    with patch("podmate.pipeline._extract_episode_meta", return_value={}):
+        _update_podcasts_index(str(tmp_path))
     index_md = tmp_path / "index.md"
     mtime1 = index_md.stat().st_mtime
     content1 = index_md.read_text()
 
-    _update_podcasts_index(str(tmp_path))
+    with patch("podmate.pipeline._extract_episode_meta", return_value={}):
+        _update_podcasts_index(str(tmp_path))
     mtime2 = index_md.stat().st_mtime
 
     assert mtime1 == mtime2
@@ -2430,18 +2434,139 @@ def test_update_index_rewrites_when_changed(tmp_path):
     from podmate.pipeline import _update_podcasts_index
 
     (tmp_path / "ep1.md").write_text("# Ep One\n\nContent.\n")
-    _update_podcasts_index(str(tmp_path))
+    with patch("podmate.pipeline._extract_episode_meta", return_value={}):
+        _update_podcasts_index(str(tmp_path))
     content1 = tmp_path.joinpath("index.md").read_text()
-    assert "**Ep One**" in content1
-    assert "| 1 | **Ep One** | [🇬🇧 英文](ep1.md) | — |" in content1
+    assert "[**Ep One**](ep1.md)" in content1
     assert "ep2.md" not in content1
 
     (tmp_path / "ep2.md").write_text("# Ep Two\n\nContent.\n")
-    _update_podcasts_index(str(tmp_path))
+    with patch("podmate.pipeline._extract_episode_meta", return_value={}):
+        _update_podcasts_index(str(tmp_path))
     content2 = tmp_path.joinpath("index.md").read_text()
-    assert "**Ep One**" in content2
-    assert "**Ep Two**" in content2
+    assert "[**Ep One**](ep1.md)" in content2
+    assert "[**Ep Two**](ep2.md)" in content2
     assert content2 != content1
+
+
+def test_update_index_with_metadata(tmp_path):
+    """Metadata from DB is rendered in the table columns."""
+    from podmate.pipeline import _update_podcasts_index
+
+    (tmp_path / "ep1.md").write_text("# Episode One\n\nContent.\n")
+
+    mock_meta = {
+        "ep1": {
+            "title": "Episode One",
+            "pub_date": "2026-04-08T12:00:00",
+            "duration_sec": 6360,  # 1h46min
+            "description": "DHH discusses why he changed his mind about AI coding assistants.",
+            "feed_title": "The Pragmatic Engineer",
+        }
+    }
+
+    with patch("podmate.pipeline._extract_episode_meta", return_value=mock_meta):
+        _update_podcasts_index(str(tmp_path))
+
+    content = tmp_path.joinpath("index.md").read_text()
+    assert "| # | 标题 | 日期 | 时长 | 语言 | 来源 | 简介 |" in content
+    assert "2026-04-08" in content
+    assert "1h46min" in content
+    assert "The Pragmatic Engineer" in content
+    assert "DHH discusses why he changed his mind about AI coding assistants." in content
+
+
+def test_update_index_with_metadata_empty_fields(tmp_path):
+    """Missing metadata fields render as '—'."""
+    from podmate.pipeline import _update_podcasts_index
+
+    (tmp_path / "ep1.md").write_text("# Ep\n\nContent.\n")
+
+    mock_meta = {"ep1": {}}
+
+    with patch("podmate.pipeline._extract_episode_meta", return_value=mock_meta):
+        _update_podcasts_index(str(tmp_path))
+
+    content = tmp_path.joinpath("index.md").read_text()
+    # Each missing field should show "—"
+    line = [l for l in content.split("\n") if l.startswith("| 1 |")][0]
+    cells = [c.strip() for c in line.split("|")[1:-1]]
+    # cells: ['1', title_cell, date, duration, lang_cell, source, description]
+    assert cells[2] == "—"  # date
+    assert cells[3] == "—"  # duration
+    assert cells[5] == "—"  # source
+    assert cells[6] == "—"  # description
+
+
+def test_update_index_bilingual_with_metadata(tmp_path):
+    """Bilingual entries show Chinese title and both language badges."""
+    from podmate.pipeline import _update_podcasts_index
+
+    (tmp_path / "ep1.md").write_text("# Original Title\n\nContent.\n")
+    (tmp_path / "ep1.zh.md").write_text("# 中文标题\n\n内容。\n")
+
+    mock_meta = {
+        "ep1": {
+            "pub_date": "2026-04-08T12:00:00",
+            "duration_sec": 1800,
+            "description": "A tech discussion about AI.",
+            "feed_title": "Tech Podcast",
+        }
+    }
+
+    with patch("podmate.pipeline._extract_episode_meta", return_value=mock_meta):
+        _update_podcasts_index(str(tmp_path))
+
+    content = tmp_path.joinpath("index.md").read_text()
+    # Chinese title from .zh.md
+    assert "[**中文标题**](ep1.zh.md)" in content
+    # Both language badges
+    assert "🇨🇳 中文" in content
+    assert "🇬🇧 英文" in content
+    assert "2026-04-08" in content
+    assert "30min" in content
+    assert "Tech Podcast" in content
+
+
+def test_update_index_truncates_long_description(tmp_path):
+    """Descriptions longer than 80 chars are truncated with …."""
+    from podmate.pipeline import _update_podcasts_index
+
+    (tmp_path / "ep1.md").write_text("# Ep\n\nContent.\n")
+
+    long_desc = "A" * 100
+    mock_meta = {"ep1": {"description": long_desc}}
+
+    with patch("podmate.pipeline._extract_episode_meta", return_value=mock_meta):
+        _update_podcasts_index(str(tmp_path))
+
+    content = tmp_path.joinpath("index.md").read_text()
+    # Should be truncated to 80 chars + …
+    assert "A" * 80 + "…" in content
+    assert "A" * 81 not in content
+
+
+def test_format_duration():
+    """_format_duration converts seconds to human-readable format."""
+    from podmate.pipeline import _format_duration
+
+    assert _format_duration(0) == "0min"
+    assert _format_duration(60) == "1min"
+    assert _format_duration(3600) == "1h0min"
+    assert _format_duration(3660) == "1h1min"
+    assert _format_duration(6360) == "1h46min"
+    assert _format_duration(7200) == "2h0min"
+
+
+def test_truncate_text():
+    """_truncate_text strips HTML and truncates."""
+    from podmate.pipeline import _truncate_text
+
+    assert _truncate_text("Hello", 10) == "Hello"
+    assert _truncate_text("Hello World", 5) == "Hello…"
+    assert _truncate_text("<p>Hello</p>", 10) == "Hello"
+    assert _truncate_text("<a href='x'>Click here</a> for more", 10) == "Click here…"
+    assert _truncate_text("", 10) == ""
 
 
 # ── CLI: export command ─────────────────────────────────
@@ -2465,9 +2590,10 @@ def test_cli_export_rebuild_index(tmp_path, monkeypatch):
     index_md = cbrain_dir / "index.md"
     assert index_md.is_file()
     content = index_md.read_text()
-    assert "**Episode A**" in content
-    assert "**Episode B**" in content
+    assert "[**Episode A**](a.md)" in content
+    assert "[**Episode B**](b.md)" in content
     assert "🇬🇧 英文" in content
+    assert "| # | 标题 | 日期 | 时长 | 语言 | 来源 | 简介 |" in content
 
 
 def test_cli_export_episode_no_transcript(tmp_path, monkeypatch):
