@@ -38,8 +38,9 @@ from .db import (
     set_episode_path,
     update_episode_status,
 )
+from .models import Episode
 from .downloader import download_episode
-from .feed import PodcastIndexClient, parse_feed, resolve_feed, search_itunes
+from .feed import PodcastIndexClient, _strip_html, parse_feed, resolve_feed, search_itunes
 from .transcriber import _format_time, format_transcript, transcribe_via_deepgram
 
 DATA_SUBDIRS = ["episodes", "transcripts", "translations", "dubs"]
@@ -56,10 +57,14 @@ def ensure_data_dirs() -> None:
         os.makedirs(os.path.join(_get_data_dir(), sub), exist_ok=True)
 
 
+def _safe_filename(guid: str) -> str:
+    """将 guid 中的不安全字符替换为 _，避免 Markdown URL 解析问题。"""
+    return guid.replace(":", "_")
+
 def _get_data_path(guid: str, subdir: str) -> str:
-    """返回 data/{subdir}/{guid}.json 或 data/{subdir}/{guid}.mp3 的完整路径。"""
+    """返回 data/{subdir}/{safe_guid}.json 或 data/{subdir}/{safe_guid}.mp3 的完整路径。"""
     ext = ".mp3" if subdir in ("episodes", "dubs") else ".json"
-    return os.path.join(_get_data_dir(), subdir, f"{guid}{ext}")
+    return os.path.join(_get_data_dir(), subdir, f"{_safe_filename(guid)}{ext}")
 
 
 def _get_cbrain_dir() -> Path:
@@ -1515,7 +1520,7 @@ def _cmd_export_episode(
         console.print(f"[red]❌ 未找到剧集 ID: {episode_id_int}[/red]")
         raise typer.Exit(code=1)
 
-    if not ep.transcript_path:
+    if not ep.transcript_path and not ep.translation_path:
         console.print(f"[yellow]📝 剧集 #{episode_id_int} 尚未转写，无法导出[/yellow]")
         console.print(
             f"[dim]提示: 先运行 [cyan]podmate episode process {episode_id_int}[/cyan]"
@@ -1530,26 +1535,41 @@ def _cmd_export_episode(
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
+    # 友好文件名: feed_title/guid-safe.md (避免 : 等 Markdown 特殊字符)
+    feed_name = ep.feed_title or "podcast"
+    slug = _safe_filename(ep.guid)
+
     if format == "json":
-        src = Path(ep.transcript_path)
+        src = Path(ep.transcript_path or ep.translation_path)
         if not src.is_file():
             console.print(f"[yellow]📝 剧集 #{episode_id_int} 的 JSON 转写稿不存在[/yellow]")
             raise typer.Exit(code=1)
-        dest = dest_dir / src.name
+        dest = dest_dir / f"{slug}.json"
         shutil.copy2(src, dest)
         console.print(f"[green]✅ 已导出到: {dest}[/green]")
     else:
-        md_path = Path(ep.transcript_path).with_suffix(".md")
-        if not md_path.is_file():
+        # 导出英文文字稿（如果有）
+        en_exported = False
+        if ep.transcript_path:
+            md_path = Path(ep.transcript_path).with_suffix(".md")
+            if md_path.is_file():
+                dest = dest_dir / f"{slug}.md"
+                _export_with_metadata(md_path, dest, ep)
+                en_exported = True
+
+        # 导出中文翻译（如果有）
+        if ep.translation_path:
+            zh_path = Path(ep.translation_path)
+            if zh_path.is_file():
+                dest = dest_dir / f"{slug}.zh.md"
+                _export_with_metadata(zh_path, dest, ep)
+                en_exported = True
+
+        if not en_exported:
             console.print(f"[yellow]📝 剧集 #{episode_id_int} 的 Markdown 文字稿不存在[/yellow]")
-            console.print(
-                f"[dim]提示: 重新运行 [cyan]podmate episode process {episode_id_int}[/cyan]"
-                f" 生成文字稿[/dim]"
-            )
             raise typer.Exit(code=1)
-        dest = dest_dir / md_path.name
-        shutil.copy2(md_path, dest)
-        console.print(f"[green]✅ 已导出到: {dest}[/green]")
+
+        console.print(f"[green]✅ 已导出到: {dest_dir / f'{slug}'}.md/.zh.md[/green]")
 
 
 def _cmd_export_sync(
@@ -1603,6 +1623,36 @@ def _cmd_export_sync(
 
     _update_podcasts_index(str(cbrain_dir))
     console.print(f"[dim]📊 已同步 [bold]{exported}[/bold] 集到 cbrain ({cbrain_dir})[/dim]")
+
+
+def _export_with_metadata(src: Path, dest: Path, ep: Episode) -> None:
+    """将文字稿复制到目标路径，并附加剧集元数据头部。"""
+    content = src.read_text(encoding="utf-8")
+
+    # 去掉可能已存在的元数据头部（以 --- 围起来的部分）
+    lines = content.split("\n")
+    if lines and lines[0].strip() == "---":
+        end_idx = 1
+        while end_idx < len(lines) and lines[end_idx].strip() != "---":
+            end_idx += 1
+        if end_idx < len(lines):
+            content = "\n".join(lines[end_idx + 1:])
+
+    # 构建元数据
+    meta_lines = ["---"]
+    meta_lines.append(f'title: "{ep.title}"')
+    if ep.feed_title:
+        meta_lines.append(f'source: "{ep.feed_title}"')
+    if ep.pub_date:
+        meta_lines.append(f'date: "{ep.pub_date[:10]}"')
+    if ep.description:
+        # 简短摘录作为 description
+        desc_short = _strip_html(ep.description)[:300].replace('"', "'")
+        meta_lines.append(f'description: "{desc_short}"')
+    meta_lines.append("---")
+    meta_lines.append("")
+
+    dest.write_text("\n".join(meta_lines) + content.lstrip(), encoding="utf-8")
 
 
 def _cmd_export_index() -> None:

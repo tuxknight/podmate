@@ -25,10 +25,15 @@ from .translator import translate_segments
 DATA_DIR = os.path.expanduser(load_config()["storage"]["data_dir"])
 
 
+def _safe_filename(guid: str) -> str:
+    """将 guid 中的不安全字符替换为 _，避免 Markdown URL 解析问题。"""
+    return guid.replace(":", "_")
+
+
 def _get_data_path(guid: str, subdir: str) -> str:
-    """返回 data/{subdir}/{guid}.json 或 data/{subdir}/{guid}.mp3 的完整路径。"""
+    """返回 data/{subdir}/{safe_guid}.json 或 data/{subdir}/{safe_guid}.mp3 的完整路径。"""
     ext = ".mp3" if subdir in ("episodes", "dubs") else ".json"
-    return os.path.join(DATA_DIR, subdir, f"{guid}{ext}")
+    return os.path.join(DATA_DIR, subdir, f"{_safe_filename(guid)}{ext}")
 
 
 # ── 进度回调 ────────────────────────────────────────
@@ -240,6 +245,7 @@ def _extract_title_from_md(md_path: Path) -> str:
 def _update_podcasts_index(export_dir: str) -> None:
     """扫描 export_dir 中的 .md 转写稿，重建 index.md。
 
+    自动合并同一条目的多语言版本（xxx.md + xxx.zh.md → 同行展示）。
     只在实际内容变化时写入，避免不必要的 git 变动。
     """
     export_path = Path(export_dir)
@@ -251,10 +257,36 @@ def _update_podcasts_index(export_dir: str) -> None:
     if not md_files:
         content = "# 🎙 播客转写稿\n\n暂无转写记录。\n"
     else:
-        lines = ["# 🎙 播客转写稿", "", "| # | 标题 |", "|---|------|"]
-        for i, md_file in enumerate(md_files, start=1):
-            title = _extract_title_from_md(md_file)
-            lines.append(f"| {i} | [{title}]({md_file.name}) |")
+        lines = ["# 🎙 播客转写稿", "", "| # | 标题 | 语言 | 来源播客 |", "|---|------|------|---------|"]
+
+        # group by base name (strip .zh before extension)
+        groups: dict[str, list[Path]] = {}
+        for f in md_files:
+            stem = f.stem  # e.g. substack:post:193375117.zh → substack:post:193375117.zh
+            base = stem.removesuffix(".zh")  # strip .zh suffix
+            groups.setdefault(base, []).append(f)
+
+        for i, base in enumerate(sorted(groups), start=1):
+            files = groups[base]
+            zh_file = next((f for f in files if ".zh." in f.name or f.stem.endswith(".zh")), None)
+            en_file = next((f for f in files if f is not zh_file), files[0])
+
+            # Pick the title from the primary (zh if available, else en)
+            primary = zh_file or en_file
+            title = _extract_title_from_md(primary)
+
+            # Build language badges
+            badges = []
+            if zh_file:
+                badges.append(f"[🇨🇳 中文]({zh_file.name})")
+            if en_file:
+                badges.append(f"[🇬🇧 英文]({en_file.name})")
+
+            lang_cell = " · ".join(badges) if badges else "—"
+
+            # Show base name as source (rough — derived from filename)
+            lines.append(f"| {i} | **{title}** | {lang_cell} | — |")
+
         content = "\n".join(lines) + "\n"
 
     if index_path.exists():

@@ -2383,9 +2383,10 @@ def test_update_index_with_files(tmp_path):
 
     index_md = tmp_path / "index.md"
     content = index_md.read_text()
-    assert "| # | 标题 |" in content
-    assert "[Episode One](ep1.md)" in content
-    assert "[Episode Two](ep2.md)" in content
+    assert "| # | 标题 | 语言 | 来源播客 |" in content
+    assert "**Episode One**" in content
+    assert "**Episode Two**" in content
+    assert "🇬🇧 英文" in content
     # ep1 comes first (sorted)
     assert content.index("Episode One") < content.index("Episode Two")
 
@@ -2400,9 +2401,10 @@ def test_update_index_excludes_self(tmp_path):
     _update_podcasts_index(str(tmp_path))
 
     content = tmp_path.joinpath("index.md").read_text()
-    assert "[Ep One](ep1.md)" in content
+    assert "**Ep One**" in content
+    assert "🇬🇧 英文" in content
     # Should not link to itself
-    assert "[index](index.md)" not in content.replace(" ", "").replace("|", "").replace("-", "")
+    assert "index.md" not in content.replace(" ", "").replace("|", "").replace("-", "")
 
 
 def test_update_index_no_write_when_unchanged(tmp_path):
@@ -2430,14 +2432,15 @@ def test_update_index_rewrites_when_changed(tmp_path):
     (tmp_path / "ep1.md").write_text("# Ep One\n\nContent.\n")
     _update_podcasts_index(str(tmp_path))
     content1 = tmp_path.joinpath("index.md").read_text()
-    assert "[Ep One](ep1.md)" in content1
-    assert "[Ep Two](ep2.md)" not in content1
+    assert "**Ep One**" in content1
+    assert "| 1 | **Ep One** | [🇬🇧 英文](ep1.md) | — |" in content1
+    assert "ep2.md" not in content1
 
     (tmp_path / "ep2.md").write_text("# Ep Two\n\nContent.\n")
     _update_podcasts_index(str(tmp_path))
     content2 = tmp_path.joinpath("index.md").read_text()
-    assert "[Ep One](ep1.md)" in content2
-    assert "[Ep Two](ep2.md)" in content2
+    assert "**Ep One**" in content2
+    assert "**Ep Two**" in content2
     assert content2 != content1
 
 
@@ -2462,8 +2465,9 @@ def test_cli_export_rebuild_index(tmp_path, monkeypatch):
     index_md = cbrain_dir / "index.md"
     assert index_md.is_file()
     content = index_md.read_text()
-    assert "[Episode A](a.md)" in content
-    assert "[Episode B](b.md)" in content
+    assert "**Episode A**" in content
+    assert "**Episode B**" in content
+    assert "🇬🇧 英文" in content
 
 
 def test_cli_export_episode_no_transcript(tmp_path, monkeypatch):
@@ -2528,7 +2532,11 @@ def test_cli_export_episode_success(tmp_path, monkeypatch):
     assert "已导出到" in result.stdout
     copied = cbrain_dir / "export-ok-guid.md"
     assert copied.is_file()
-    assert copied.read_text() == "# Export OK Ep\n\nContent.\n"
+    # 导出时会附加元数据头部
+    content = copied.read_text()
+    assert "---" in content
+    assert 'title: "Export OK Ep"' in content
+    assert "Content." in content
 
 
 def test_cli_export_episode_not_found():
@@ -2632,7 +2640,10 @@ def test_cli_export_custom_output(tmp_path, monkeypatch):
     assert custom_dir.is_dir()
     copied_md = custom_dir / "export-out-guid.md"
     assert copied_md.is_file()
-    assert copied_md.read_text() == "# Export Out Ep\n\nContent.\n"
+    content = copied_md.read_text()
+    assert "---" in content
+    assert 'title: "Export Out Ep"' in content
+    assert "Content." in content
 
 
 def test_cli_export_format_json_custom_output(tmp_path, monkeypatch):
@@ -3620,7 +3631,8 @@ def test_sync_cbrain_rebuilds_index(tmp_path, monkeypatch):
     index_md = cbrain_dir / "index.md"
     assert index_md.is_file()
     content = index_md.read_text()
-    assert "[Index Sync Ep](sync-index-guid.md)" in content
+    assert "**Index Sync Ep**" in content
+    assert "🇬🇧 英文" in content
 
 
 # ── helpers ────────────────────────────────────────────

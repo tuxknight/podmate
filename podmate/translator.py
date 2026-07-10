@@ -64,10 +64,14 @@ async def translate_segments(
     translated_segments: list[dict[str, Any]] = []
     total_batches = (len(segments) + batch_size - 1) // batch_size
 
-    # 先分析整体风格和话题（用第一批作为样本）
+    # 先分析整体风格、话题和说话人身份（用第一批作为样本）
     tone_analysis = ""
+    speaker_mapping: dict[str, str] = {}
     first_batch = segments[: min(batch_size, len(segments))]
-    first_text = "\n".join(f"[{s['id']}] {s['text']}" for s in first_batch)
+    first_text = "\n".join(
+        f"[{s['id']}][Speaker {s.get('speaker', '?')}] {s['text']}"
+        for s in first_batch
+    )
 
     analysis_prompt = (
         "As a professional podcast analyst, analyze the following transcript excerpt.\n"
@@ -75,16 +79,33 @@ async def translate_segments(
         "1. The main topic(s) being discussed\n"
         "2. The speaker's tone and speaking style"
         " (e.g., enthusiastic, academic, conversational, dramatic)\n"
-        "3. Any technical terminology or jargon domains\n\n"
+        "3. Any technical terminology or jargon domains\n"
+        "4. Try to identify the real names of each speaker (e.g., DHH, host name)"
+        " based on contextual clues in the conversation.\n\n"
         f"Transcript:\n{first_text}\n\n"
-        "Return your analysis concisely in Chinese, 100 characters max."
+        "Return your analysis concisely in Chinese, 100 characters max for tone/style.\n"
+        "Then return speaker mapping in format:\n"
+        "SPEAKER_MAP: A=Real Name, B=Real Name, ..."
     )
 
     analysis_result = await _call_deepseek(
         analysis_prompt,
         system_role="你是一个播客分析专家。用中文简洁回复。",
     )
-    tone_analysis = analysis_result.get("content", "")
+
+    analysis_text = analysis_result.get("content", "")
+    tone_analysis = analysis_text
+
+    # 提取说话人映射
+    import re as _re
+    map_match = _re.search(r"SPEAKER_MAP:\s*(.+)", analysis_text, _re.IGNORECASE)
+    if map_match:
+        map_part = map_match.group(1)
+        for pair in map_part.split(","):
+            pair = pair.strip()
+            if "=" in pair:
+                key, val = pair.split("=", 1)
+                speaker_mapping[key.strip().upper()] = val.strip()
 
     # 逐批翻译
     for batch_idx in range(total_batches):
@@ -120,13 +141,16 @@ async def translate_segments(
         for s in batch:
             seg_id = s["id"]
             zh_text, tone = _extract_translation(content, seg_id)
+            raw_speaker = s.get("speaker", "")
+            display_speaker = speaker_mapping.get(raw_speaker.upper(), raw_speaker) if raw_speaker else ""
             translated_segments.append(
                 {
                     "id": seg_id,
                     "start": s.get("start", 0.0),
                     "end": s.get("end", 0.0),
                     "text": s.get("text", ""),
-                    "speaker": s.get("speaker", ""),
+                    "speaker": raw_speaker,
+                    "speaker_name": display_speaker,
                     "zh": zh_text,
                     "tone": tone,
                 }
@@ -149,6 +173,7 @@ async def translate_segments(
         "key_points": summary_data.get("key_points", []),
         "episode_title_zh": summary_data.get("episode_title_zh", ""),
         "speaker_notes": tone_analysis,
+        "speaker_mapping": speaker_mapping,
         "segments": translated_segments,
         "duration_sec": segments[-1].get("end", 0) if segments else 0,
     }
