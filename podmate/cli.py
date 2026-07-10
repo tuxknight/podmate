@@ -684,30 +684,43 @@ def describe(
 
 @app.command()
 def mark(
-    episode_id: int = typer.Argument(..., help="剧集 ID"),
+    episode_id: str = typer.Argument("", help="剧集 ID (正数). 负数请用 --id"),
+    id: int = typer.Option(None, "--id", "-i", help="剧集 ID（支持负数）"),
     read: bool = typer.Option(False, "--read", help="标记为已读"),
     unread: bool = typer.Option(False, "--unread", help="标记为未读"),
     star: bool = typer.Option(False, "--star", help="添加星标"),
     unstar: bool = typer.Option(False, "--unstar", help="取消星标"),
 ) -> None:
     """标记剧集已读/未读或添加/取消星标。"""
-    ep = get_episode(episode_id)
+    if id is not None:
+        episode_id_int = id
+    elif episode_id:
+        try:
+            episode_id_int = int(episode_id)
+        except ValueError:
+            console.print(f"[red]❌ 剧集 ID 必须是数字: {episode_id}[/red]")
+            raise typer.Exit(code=1)
+    else:
+        console.print("[red]❌ 请指定剧集 ID[/red]")
+        raise typer.Exit(code=1)
+
+    ep = get_episode(episode_id_int)
     if not ep:
-        console.print(f"[red]❌ 未找到剧集 ID: {episode_id}[/red]")
+        console.print(f"[red]❌ 未找到剧集 ID: {episode_id_int}[/red]")
         raise typer.Exit(code=1)
 
     messages: list[str] = []
     if read:
-        mark_episode_read(episode_id, True)
+        mark_episode_read(episode_id_int, True)
         messages.append("已标记为已读")
     if unread:
-        mark_episode_read(episode_id, False)
+        mark_episode_read(episode_id_int, False)
         messages.append("已标记为未读")
     if star:
-        mark_episode_starred(episode_id, True)
+        mark_episode_starred(episode_id_int, True)
         messages.append("已添加星标")
     if unstar:
-        mark_episode_starred(episode_id, False)
+        mark_episode_starred(episode_id_int, False)
         messages.append("已取消星标")
 
     if not messages:
@@ -723,12 +736,25 @@ def mark(
 
 @app.command()
 def episode(
-    episode_id: int = typer.Argument(..., help="剧集 ID"),
+    episode_id: str = typer.Argument("", help="剧集 ID (正数). 负数请用 --id"),
+    id: int = typer.Option(None, "--id", "-i", help="剧集 ID（支持负数）"),
 ) -> None:
     """查看剧集详情。"""
-    ep = get_episode(episode_id)
+    if id is not None:
+        episode_id_int = id
+    elif episode_id:
+        try:
+            episode_id_int = int(episode_id)
+        except ValueError:
+            console.print(f"[red]❌ 剧集 ID 必须是数字: {episode_id}[/red]")
+            raise typer.Exit(code=1)
+    else:
+        console.print("[red]❌ 请指定剧集 ID[/red]")
+        raise typer.Exit(code=1)
+
+    ep = get_episode(episode_id_int)
     if not ep:
-        console.print(f"[red]❌ 未找到剧集 ID: {episode_id}[/red]")
+        console.print(f"[red]❌ 未找到剧集 ID: {episode_id_int}[/red]")
         raise typer.Exit(code=1)
 
     lines = [

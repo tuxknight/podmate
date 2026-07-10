@@ -2114,6 +2114,45 @@ def test_mark_no_flags():
     assert "请指定标记操作" in result.stdout
 
 
+def test_mark_negative_id_via_option():
+    """Marking via --id -1 parses correctly (episode may not exist)."""
+    result = runner.invoke(app, ["mark", "--id", "-1", "--read"])
+
+    assert result.exit_code in (0, 1)
+
+
+def test_mark_negative_positional_fails():
+    """Mark with positional -1 fails — Click treats it as an option flag.
+    Known limitation: use --id -1 instead."""
+    result = runner.invoke(app, ["mark", "-1", "--read"])
+
+    assert result.exit_code == 2
+    assert "No such option" in result.stdout or "No such option" in result.stderr
+
+
+def test_mark_dash_dash_1_fails():
+    """Mark with positional --1 fails — Click treats it as an option flag."""
+    result = runner.invoke(app, ["mark", "--1", "--star"])
+
+    assert result.exit_code == 2
+
+
+def test_mark_non_numeric_id():
+    """Mark with non-numeric positional ID shows numeric error."""
+    result = runner.invoke(app, ["mark", "abc", "--read"])
+
+    assert result.exit_code == 1
+    assert "必须是数字" in result.stdout
+    assert "abc" in result.stdout
+
+
+def test_episode_negative_id_via_option():
+    """Episode detail via --id -1 parses correctly."""
+    result = runner.invoke(app, ["episode", "--id", "-1"])
+
+    assert result.exit_code in (0, 1)
+
+
 def test_episode_detail_shows_read_status():
     """Episode detail command displays read/star status."""
     feed = add_feed(url="https://example.com/ep-detail.xml", title="Detail Feed")
