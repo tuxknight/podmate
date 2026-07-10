@@ -13,6 +13,7 @@ import yaml
 from .config import load as load_config
 from .db import (
     get_episode,
+    mark_episode_exported,
     set_episode_path,
     update_episode_status,
 )
@@ -147,6 +148,7 @@ async def run_pipeline(
             dest = cbrain_podcasts / md_path.name
             shutil.copy2(md_path, dest)
             exported_to_cbrain = True
+            mark_episode_exported(episode_id)
             _emit("exported", 1.0, f"已导出到 cbrain: {dest}")
             try:
                 _update_podcasts_index(str(cbrain_podcasts))

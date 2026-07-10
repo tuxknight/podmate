@@ -3407,6 +3407,222 @@ async def test_transcribe_via_deepgram_success(tmp_path):
     assert len(result["segments"]) == 1
 
 
+# ── CLI: sync-cbrain ──────────────────────────────────────
+
+
+def test_sync_cbrain_no_unexported(tmp_path, monkeypatch):
+    """When all episodes are already exported, sync_cbrain shows completion message."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/sync-all-done.xml", title="All Done")
+    ep = add_episode(feed_id=feed.id, guid="sync-all-done", title="All Done Ep")
+
+    json_path = tmp_path / "sync-all-done.json"
+    json_path.write_text("{}")
+    md_path = tmp_path / "sync-all-done.md"
+    md_path.write_text("# All Done Ep\n\nContent.\n")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    from podmate.db import mark_episode_exported, update_episode_status
+
+    update_episode_status(ep.id, "transcribed")
+    mark_episode_exported(ep.id)
+
+    result = runner.invoke(app, ["sync-cbrain"])
+
+    assert result.exit_code == 0
+    assert "[podmate] 所有转写稿已同步到 cbrain" in result.stdout
+
+
+def test_sync_cbrain_dry_run(tmp_path, monkeypatch):
+    """--dry-run shows episodes that would be exported but does not copy files."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/sync-dry.xml", title="Dry Sync")
+    ep = add_episode(feed_id=feed.id, guid="sync-dry-guid", title="Dry Sync Episode")
+
+    json_path = tmp_path / "sync-dry-guid.json"
+    json_path.write_text("{}")
+    md_path = tmp_path / "sync-dry-guid.md"
+    md_path.write_text("# Dry Sync Episode\n\nContent.\n")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    from podmate.db import update_episode_status
+
+    update_episode_status(ep.id, "transcribed")
+
+    result = runner.invoke(app, ["sync-cbrain", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "预览模式" in result.stdout
+    assert "Dry Sync Episode" in result.stdout
+    assert "md=✅" in result.stdout
+    assert "--dry-run" in result.stdout
+    # No files should be copied
+    assert not list(cbrain_dir.glob("*.md"))
+
+
+def test_sync_cbrain_actual_sync(tmp_path, monkeypatch):
+    """sync-cbrain copies .md and .json files, marks exported, rebuilds index."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/sync-actual.xml", title="Actual Sync")
+    ep = add_episode(feed_id=feed.id, guid="sync-actual-guid", title="Actual Sync Ep")
+
+    json_path = tmp_path / "sync-actual-guid.json"
+    json_path.write_text('{"text":"Hello."}')
+    md_path = tmp_path / "sync-actual-guid.md"
+    md_path.write_text("# Actual Sync Ep\n\nContent.\n")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    from podmate.db import update_episode_status
+
+    update_episode_status(ep.id, "transcribed")
+
+    result = runner.invoke(app, ["sync-cbrain"])
+
+    assert result.exit_code == 0
+    assert "已同步" in result.stdout
+    assert "1" in result.stdout
+
+    # Files should be copied
+    copied_md = cbrain_dir / "sync-actual-guid.md"
+    copied_json = cbrain_dir / "sync-actual-guid.json"
+    assert copied_md.is_file()
+    assert copied_json.is_file()
+    assert copied_md.read_text() == "# Actual Sync Ep\n\nContent.\n"
+
+    # Episode should be marked as exported
+    updated = get_episode(ep.id)
+    assert updated.exported_to_cbrain is True
+
+    # Index should be regenerated
+    index_md = cbrain_dir / "index.md"
+    assert index_md.is_file()
+    assert "Actual Sync Ep" in index_md.read_text()
+
+
+def test_sync_cbrain_with_since(tmp_path, monkeypatch):
+    """--since filters episodes by creation date."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/sync-since.xml", title="Since Sync")
+
+    ep_old = add_episode(feed_id=feed.id, guid="sync-old-guid", title="Old Episode")
+    json_old = tmp_path / "sync-old-guid.json"
+    json_old.write_text("{}")
+    md_old = tmp_path / "sync-old-guid.md"
+    md_old.write_text("# Old Episode\n\nOld.\n")
+    set_episode_path(ep_old.id, "transcript_path", str(json_old))
+
+    ep_new = add_episode(feed_id=feed.id, guid="sync-new-guid", title="New Episode")
+    json_new = tmp_path / "sync-new-guid.json"
+    json_new.write_text("{}")
+    md_new = tmp_path / "sync-new-guid.md"
+    md_new.write_text("# New Episode\n\nNew.\n")
+    set_episode_path(ep_new.id, "transcript_path", str(json_new))
+
+    from podmate.db import get_connection as db_get_connection
+    from podmate.db import update_episode_status
+
+    update_episode_status(ep_old.id, "transcribed")
+    update_episode_status(ep_new.id, "transcribed")
+
+    # Set created_at timestamps
+    conn = db_get_connection()
+    conn.execute("UPDATE episodes SET created_at = '2026-01-01' WHERE guid = ?", ("sync-old-guid",))
+    conn.execute("UPDATE episodes SET created_at = '2026-07-01' WHERE guid = ?", ("sync-new-guid",))
+    conn.commit()
+
+    result = runner.invoke(app, ["sync-cbrain", "--since", "2026-06-01"])
+
+    assert result.exit_code == 0
+    assert "已同步" in result.stdout
+
+    # Old episode (2026-01-01) should NOT be exported
+    copied_old = cbrain_dir / "sync-old-guid.md"
+    assert not copied_old.is_file()
+
+    # New episode (2026-07-01) SHOULD be exported
+    copied_new = cbrain_dir / "sync-new-guid.md"
+    assert copied_new.is_file()
+
+    updated_old = get_episode(ep_old.id)
+    assert updated_old.exported_to_cbrain is False
+    updated_new = get_episode(ep_new.id)
+    assert updated_new.exported_to_cbrain is True
+
+
+def test_sync_cbrain_skips_episodes_without_transcript(tmp_path, monkeypatch):
+    """Episodes without transcript_path are not included in sync."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/sync-notrans.xml", title="No Trans Sync")
+    add_episode(feed_id=feed.id, guid="sync-notrans-guid", title="No Trans Ep")
+    # No transcript_path set
+
+    result = runner.invoke(app, ["sync-cbrain"])
+
+    assert result.exit_code == 0
+    assert "[podmate] 所有转写稿已同步到 cbrain" in result.stdout
+
+
+def test_sync_cbrain_rebuilds_index(tmp_path, monkeypatch):
+    """After sync, _update_podcasts_index is called and index.md exists."""
+    cbrain_dir = tmp_path / "cbrain" / "podcasts"
+    cbrain_dir.mkdir(parents=True)
+
+    test_cfg = load_config().copy()
+    test_cfg["storage"]["cbrain_dir"] = str(cbrain_dir)
+    monkeypatch.setattr("podmate.cli.load_config", lambda: test_cfg)
+
+    feed = add_feed(url="https://example.com/sync-index.xml", title="Index Sync")
+    ep = add_episode(feed_id=feed.id, guid="sync-index-guid", title="Index Sync Ep")
+
+    json_path = tmp_path / "sync-index-guid.json"
+    json_path.write_text("{}")
+    md_path = tmp_path / "sync-index-guid.md"
+    md_path.write_text("# Index Sync Ep\n\nContent.\n")
+    set_episode_path(ep.id, "transcript_path", str(json_path))
+
+    from podmate.db import update_episode_status
+
+    update_episode_status(ep.id, "transcribed")
+
+    result = runner.invoke(app, ["sync-cbrain"])
+
+    assert result.exit_code == 0
+    index_md = cbrain_dir / "index.md"
+    assert index_md.is_file()
+    content = index_md.read_text()
+    assert "[Index Sync Ep](sync-index-guid.md)" in content
+
+
 # ── helpers ────────────────────────────────────────────
 
 

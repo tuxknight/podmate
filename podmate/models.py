@@ -43,5 +43,6 @@ class Episode:
     created_at: str = ""
     is_read: bool = False
     is_starred: bool = False
+    exported_to_cbrain: bool = False
     # computed via JOIN
     feed_title: str | None = None

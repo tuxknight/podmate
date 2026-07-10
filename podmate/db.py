@@ -76,6 +76,7 @@ def init_db() -> None:
     _add_column_if_missing(conn, "feeds", "itunes_id", "INTEGER")
     _add_column_if_missing(conn, "episodes", "is_read", "INTEGER DEFAULT 0")
     _add_column_if_missing(conn, "episodes", "is_starred", "INTEGER DEFAULT 0")
+    _add_column_if_missing(conn, "episodes", "exported_to_cbrain", "INTEGER DEFAULT 0")
 
     # 为 episodes.guid 添加 UNIQUE 约束（替换旧的非唯一索引）
     conn.execute("DROP INDEX IF EXISTS idx_episodes_guid")
@@ -294,6 +295,35 @@ def mark_episode_starred(episode_id: int, starred: bool = True) -> None:
     conn.commit()
 
 
+def get_unexported_episodes(since: str | None = None) -> list[Episode]:
+    """Return episodes with transcripts that haven't been exported to cbrain."""
+    conn = get_connection()
+    base_sql = (
+        "SELECT e.*, f.title AS feed_title FROM episodes e "
+        "LEFT JOIN feeds f ON e.feed_id = f.id "
+        "WHERE e.transcript_path IS NOT NULL "
+        "AND (e.exported_to_cbrain IS NULL OR e.exported_to_cbrain = 0) "
+        "AND e.status IN ('transcribed', 'translated', 'error') "
+    )
+    params: list[Any] = []
+    if since:
+        base_sql += "AND e.created_at >= ? "
+        params.append(since)
+    base_sql += "ORDER BY e.created_at DESC"
+    rows = conn.execute(base_sql, params).fetchall()
+    return [_row_to_episode(r) for r in rows]
+
+
+def mark_episode_exported(episode_id: int) -> None:
+    """Mark an episode as exported to cbrain."""
+    conn = get_connection()
+    conn.execute(
+        "UPDATE episodes SET exported_to_cbrain = 1 WHERE id = ?",
+        (episode_id,),
+    )
+    conn.commit()
+
+
 # ── Stats ──────────────────────────────────────────────
 
 
@@ -365,6 +395,9 @@ def _row_to_episode(row: sqlite3.Row) -> Episode:
         feed_title=feed_title,
         is_read=bool(row["is_read"]) if "is_read" in keys else False,
         is_starred=bool(row["is_starred"]) if "is_starred" in keys else False,
+        exported_to_cbrain=(
+            bool(row["exported_to_cbrain"]) if "exported_to_cbrain" in keys else False
+        ),
     )
 
 
