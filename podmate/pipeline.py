@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ import yaml
 
 from .config import load as load_config
 from .db import (
+    get_connection,
     get_episode,
     mark_episode_exported,
     set_episode_path,
@@ -221,6 +223,61 @@ async def run_pipeline(
 # ── Podcasts Index ─────────────────────────────────────
 
 
+def _format_duration(seconds: int) -> str:
+    """Format seconds as '1h46min' or '5min'."""
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+    if hours > 0:
+        return f"{hours}h{minutes}min"
+    return f"{minutes}min"
+
+
+def _truncate_text(text: str, max_len: int) -> str:
+    """Strip HTML tags and truncate to max_len characters."""
+    clean = re.sub(r"<[^>]+>", "", text).strip()
+    if len(clean) <= max_len:
+        return clean
+    return clean[:max_len] + "…"
+
+
+def _extract_episode_meta(export_dir: str) -> dict[str, dict[str, Any]]:
+    """Scan exported .md files and look up episode metadata from DB.
+
+    Returns dict keyed by base filename (slug) → metadata dict.
+    """
+    export_path = Path(export_dir)
+    md_files = [p for p in export_path.glob("*.md") if p.name != "index.md"]
+
+    base_names: set[str] = set()
+    for f in md_files:
+        base_names.add(f.stem.removesuffix(".zh"))
+
+    if not base_names:
+        return {}
+
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT e.guid, e.title, e.pub_date, e.duration_sec, e.description,
+                  f.title AS feed_title
+           FROM episodes e
+           LEFT JOIN feeds f ON e.feed_id = f.id"""
+    ).fetchall()
+
+    meta: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        slug = row["guid"].replace(":", "_")
+        if slug in base_names:
+            meta[slug] = {
+                "title": row["title"],
+                "pub_date": row["pub_date"],
+                "duration_sec": row["duration_sec"],
+                "description": row["description"],
+                "feed_title": row["feed_title"],
+            }
+
+    return meta
+
+
 def _extract_title_from_md(md_path: Path) -> str:
     """Extract title from .md file: YAML frontmatter → H1 → filename fallback."""
     text = md_path.read_text(encoding="utf-8")
@@ -246,6 +303,7 @@ def _update_podcasts_index(export_dir: str) -> None:
     """扫描 export_dir 中的 .md 转写稿，重建 index.md。
 
     自动合并同一条目的多语言版本（xxx.md + xxx.zh.md → 同行展示）。
+    从数据库查询剧集元数据（日期/时长/来源/简介）。
     只在实际内容变化时写入，避免不必要的 git 变动。
     """
     export_path = Path(export_dir)
@@ -257,18 +315,20 @@ def _update_podcasts_index(export_dir: str) -> None:
     if not md_files:
         content = "# 🎙 播客转写稿\n\n暂无转写记录。\n"
     else:
+        meta = _extract_episode_meta(export_dir)
+
         lines = [
             "# 🎙 播客转写稿",
             "",
-            "| # | 标题 | 语言 | 来源播客 |",
-            "|---|------|------|---------|",
-        ]  # noqa: E501
+            "| # | 标题 | 日期 | 时长 | 语言 | 来源 | 简介 |",
+            "|---|------|------|------|------|------|------|",
+        ]
 
         # group by base name (strip .zh before extension)
         groups: dict[str, list[Path]] = {}
         for f in md_files:
-            stem = f.stem  # e.g. substack:post:193375117.zh → substack:post:193375117.zh
-            base = stem.removesuffix(".zh")  # strip .zh suffix
+            stem = f.stem
+            base = stem.removesuffix(".zh")
             groups.setdefault(base, []).append(f)
 
         for i, base in enumerate(sorted(groups), start=1):
@@ -276,21 +336,35 @@ def _update_podcasts_index(export_dir: str) -> None:
             zh_file = next((f for f in files if ".zh." in f.name or f.stem.endswith(".zh")), None)
             en_file = next((f for f in files if f is not zh_file), files[0])
 
-            # Pick the title from the primary (zh if available, else en)
             primary = zh_file or en_file
             title = _extract_title_from_md(primary)
+            link_target = primary.name
+            title_cell = f"[**{title}**]({link_target})"
 
-            # Build language badges
+            ep_meta = meta.get(base, {})
+            pub_date = ep_meta.get("pub_date") or ""
+            date_cell = pub_date[:10] if len(pub_date) >= 10 else (pub_date or "—")
+
+            duration_sec = ep_meta.get("duration_sec")
+            duration_cell = _format_duration(duration_sec) if duration_sec else "—"
+
             badges = []
             if zh_file:
                 badges.append(f"[🇨🇳 中文]({zh_file.name})")
             if en_file:
                 badges.append(f"[🇬🇧 英文]({en_file.name})")
-
             lang_cell = " · ".join(badges) if badges else "—"
 
-            # Show base name as source (rough — derived from filename)
-            lines.append(f"| {i} | **{title}** | {lang_cell} | — |")
+            feed_title = ep_meta.get("feed_title") or ""
+            source_cell = feed_title if feed_title else "—"
+
+            description = ep_meta.get("description") or ""
+            desc_cell = _truncate_text(description, 80) if description else "—"
+
+            lines.append(
+                f"| {i} | {title_cell} | {date_cell} | {duration_cell} "
+                f"| {lang_cell} | {source_cell} | {desc_cell} |"
+            )
 
         content = "\n".join(lines) + "\n"
 
