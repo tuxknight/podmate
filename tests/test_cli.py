@@ -1327,6 +1327,150 @@ def test_pipeline_saves_markdown_alongside_json(tmp_path, monkeypatch):
     assert result["transcript_path"] == json_path
 
 
+def test_pipeline_exports_to_cbrain_when_dir_exists(tmp_path, monkeypatch):
+    """When cbrain dir exists, .md transcript is copied there after transcription."""
+    import asyncio
+
+    from podmate.db import add_episode, add_feed, set_episode_path, update_episode_status
+
+    cbrain_home = tmp_path / "fake_home"
+    cbrain_podcasts = cbrain_home / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
+    cbrain_podcasts.mkdir(parents=True)
+
+    monkeypatch.setattr("podmate.pipeline.Path.home", lambda: cbrain_home)
+
+    test_cfg = {
+        "deepgram": {"api_key": "test-key", "api_url": "https://api.example.com/v1/listen", "model": "nova-2", "diarize": True},  # noqa: E501
+        "deepseek": {"api_key": "sk-test", "api_url": "https://api.example.com/v1", "model": "test", "temperature": 0.3},  # noqa: E501
+        "dubbing": {"voice": "test-voice", "rate": "1.0", "volume": "1.0"},
+        "podcast_index": {"api_key": "", "api_secret": ""},
+        "storage": {"data_dir": str(tmp_path), "keep_episodes": 5},
+    }
+    monkeypatch.setattr("podmate.pipeline.DATA_DIR", str(tmp_path))
+
+    import podmate.config as config_mod
+    monkeypatch.setattr(config_mod, "_config", test_cfg)
+
+    feed = add_feed(url="https://example.com/cbrain-test.xml", title="Cbrain Test")
+    ep = add_episode(
+        feed_id=feed.id,
+        guid="cbrain-test-guid",
+        title="Cbrain Test Episode",
+        audio_url="https://example.com/audio.mp3",
+    )
+
+    episodes_dir = os.path.join(str(tmp_path), "episodes")
+    transcripts_dir = os.path.join(str(tmp_path), "transcripts")
+    translations_dir = os.path.join(str(tmp_path), "translations")
+    dubs_dir = os.path.join(str(tmp_path), "dubs")
+    for d in [episodes_dir, transcripts_dir, translations_dir, dubs_dir]:
+        os.makedirs(d, exist_ok=True)
+
+    audio_path = os.path.join(episodes_dir, "cbrain-test-guid.mp3")
+    with open(audio_path, "wb") as f:
+        f.write(b"\x00" * 2048)
+    set_episode_path(ep.id, "local_path", audio_path)
+    update_episode_status(ep.id, "downloaded", progress=1.0)
+
+    mock_transcript = {
+        "text": "Hello world.",
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 2.0, "text": "Hello world.", "speaker": "A"},
+        ],
+        "language": "en",
+        "duration_sec": 2.0,
+    }
+
+    mock_translation = {
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 2.0, "zh": "你好世界。", "speaker": "A", "text": "Hello world."},  # noqa: E501
+        ],
+        "summary_zh": "测试摘要",
+    }
+
+    from podmate.pipeline import run_pipeline
+
+    with patch("podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)), \
+         patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)), \
+         patch("podmate.pipeline.dub_translation", new=AsyncMock(return_value=os.path.join(dubs_dir, "cbrain-test-guid.mp3"))):  # noqa: E501
+        result = asyncio.run(run_pipeline(ep.id, skip_dub=False))
+
+    assert result["exported_to_cbrain"] is True
+
+    copied_md = cbrain_podcasts / "cbrain-test-guid.md"
+    assert copied_md.is_file(), f"Markdown not copied to cbrain: {copied_md}"
+    content = copied_md.read_text()
+    assert "# Cbrain Test Episode" in content
+
+
+def test_pipeline_skips_cbrain_when_dir_missing(tmp_path, monkeypatch):
+    """When cbrain dir does not exist, pipeline succeeds without error."""
+    import asyncio
+
+    from podmate.db import add_episode, add_feed, set_episode_path, update_episode_status
+
+    nonexistent_home = tmp_path / "no_cbrain_home"
+    monkeypatch.setattr("podmate.pipeline.Path.home", lambda: nonexistent_home)
+
+    test_cfg = {
+        "deepgram": {"api_key": "test-key", "api_url": "https://api.example.com/v1/listen", "model": "nova-2", "diarize": True},  # noqa: E501
+        "deepseek": {"api_key": "sk-test", "api_url": "https://api.example.com/v1", "model": "test", "temperature": 0.3},  # noqa: E501
+        "dubbing": {"voice": "test-voice", "rate": "1.0", "volume": "1.0"},
+        "podcast_index": {"api_key": "", "api_secret": ""},
+        "storage": {"data_dir": str(tmp_path), "keep_episodes": 5},
+    }
+    monkeypatch.setattr("podmate.pipeline.DATA_DIR", str(tmp_path))
+
+    import podmate.config as config_mod
+    monkeypatch.setattr(config_mod, "_config", test_cfg)
+
+    feed = add_feed(url="https://example.com/nocbrain-test.xml", title="No Cbrain")
+    ep = add_episode(
+        feed_id=feed.id,
+        guid="nocbrain-test-guid",
+        title="No Cbrain Episode",
+        audio_url="https://example.com/audio.mp3",
+    )
+
+    episodes_dir = os.path.join(str(tmp_path), "episodes")
+    transcripts_dir = os.path.join(str(tmp_path), "transcripts")
+    translations_dir = os.path.join(str(tmp_path), "translations")
+    dubs_dir = os.path.join(str(tmp_path), "dubs")
+    for d in [episodes_dir, transcripts_dir, translations_dir, dubs_dir]:
+        os.makedirs(d, exist_ok=True)
+
+    audio_path = os.path.join(episodes_dir, "nocbrain-test-guid.mp3")
+    with open(audio_path, "wb") as f:
+        f.write(b"\x00" * 2048)
+    set_episode_path(ep.id, "local_path", audio_path)
+    update_episode_status(ep.id, "downloaded", progress=1.0)
+
+    mock_transcript = {
+        "text": "Hello.",
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 1.0, "text": "Hello.", "speaker": "A"},
+        ],
+        "language": "en",
+        "duration_sec": 1.0,
+    }
+
+    mock_translation = {
+        "segments": [
+            {"id": 0, "start": 0.0, "end": 1.0, "zh": "你好。", "speaker": "A", "text": "Hello."},
+        ],
+        "summary_zh": "测试",
+    }
+
+    from podmate.pipeline import run_pipeline
+
+    with patch("podmate.pipeline.transcribe_via_deepgram", new=AsyncMock(return_value=mock_transcript)), \
+         patch("podmate.pipeline.translate_segments", new=AsyncMock(return_value=mock_translation)), \
+         patch("podmate.pipeline.dub_translation", new=AsyncMock(return_value=os.path.join(dubs_dir, "nocbrain-test-guid.mp3"))):  # noqa: E501
+        result = asyncio.run(run_pipeline(ep.id, skip_dub=False))
+
+    assert result["exported_to_cbrain"] is False
+
+
 # ── CLI: search command ──────────────────────────────────────
 
 

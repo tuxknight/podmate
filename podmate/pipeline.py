@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -130,6 +131,17 @@ async def run_pipeline(
         speakers = set(s.get("speaker", "?") for s in result["segments"])
         _emit("transcribed", 1.0, f"转写完成: {lang}, {seg_count} 段, {len(speakers)} 位说话人")
 
+        # ── 导出到 cbrain ────────────────────────────
+        exported_to_cbrain = False
+        cbrain_podcasts = Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
+        if cbrain_podcasts.exists():
+            md_path = Path(transcript_path).with_suffix(".md")
+            if md_path.exists():
+                dest = cbrain_podcasts / md_path.name
+                shutil.copy2(md_path, dest)
+                exported_to_cbrain = True
+                _emit("exported", 1.0, f"已导出到 cbrain: {dest}")
+
         # ── 翻译 ─────────────────────────────────────
         _emit("translating", 0.0, "正在调用 DeepSeek 翻译...")
         update_episode_status(episode_id, "translating", progress=0.0)
@@ -175,6 +187,7 @@ async def run_pipeline(
             "transcript_path": transcript_path,
             "translation_path": translation_path,
             "dub_path": dub_path,
+            "exported_to_cbrain": exported_to_cbrain,
         }
 
     except Exception as e:

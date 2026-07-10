@@ -847,10 +847,12 @@ def download(
     console.print(f"\n[bold]🚀 启动流水线:[/bold] [cyan]{ep.title}[/cyan]\n")
 
     try:
-        asyncio.run(run_pipeline(
+        result = asyncio.run(run_pipeline(
             episode_id,
             skip_dub=skip_dub,
         ))
+
+        cbrain_line = "\n📚 已同步到 cbrain 知识库" if result.get("exported_to_cbrain") else ""
 
         console.print()
         console.print(Panel(
@@ -859,7 +861,8 @@ def download(
             f"[green]podmate play {episode_id}[/green]\n"
             f"[bold cyan]🎙️ 播放配音:[/bold cyan]     "
             f"[green]podmate play {episode_id} --dub[/green]\n"
-            f"[bold cyan]📄 查看详情:[/bold cyan]     [green]podmate show {episode_id}[/green]",
+            f"[bold cyan]📄 查看详情:[/bold cyan]     [green]podmate show {episode_id}[/green]"
+            f"{cbrain_line}",
             title="PodMate 处理完成",
             border_style="green",
         ))
