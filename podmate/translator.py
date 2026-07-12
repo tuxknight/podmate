@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +53,13 @@ def _maybe_load_hermes_env() -> None:
 
 _BATCH_SIZE = 20  # 每批处理的段落数
 _MAX_RETRIES = 3  # API 调用最大重试次数
-_RETRY_DELAY = 2  # 重试等待秒数
+RETRY_BASE_DELAY = 2
+RETRY_MAX_DELAY = 60
+
+
+def _backoff_delay(attempt: int) -> float:
+    """Exponential backoff with jitter: min(base * 2^n, max) * (0.5 + random)."""
+    return min(RETRY_BASE_DELAY * (2**attempt), RETRY_MAX_DELAY) * (0.5 + random.random())
 
 
 # ── 核心函数 ────────────────────────────────────────
@@ -60,6 +69,9 @@ async def translate_segments(
     segments: list[dict[str, Any]],
     batch_size: int = _BATCH_SIZE,
     episode_id: int | None = None,
+    *,
+    skip_summary: bool = False,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """将英文转写段落翻译为中文，并生成摘要。
 
@@ -67,6 +79,8 @@ async def translate_segments(
         segments: 转写结果段落列表，每段含 {"id", "start", "end", "text"}。
         batch_size: 每批处理的段落数。
         episode_id: 可选，用于更新 DB 状态。
+        skip_summary: 跳过摘要生成，返回空的 summary_zh/key_points。
+        progress_callback: 可选进度回调，接收中文进度消息。
 
     Returns:
         dict 包含:
@@ -95,10 +109,18 @@ async def translate_segments(
         f"[{s['id']}][Speaker {s.get('speaker', '?')}] {s['text']}" for s in first_batch
     )
 
+    total_start = time.monotonic()
+
+    if progress_callback:
+        progress_callback("[Translation] 正在分析说话人风格...")
+
     analysis = PromptLoader.get("translator.analysis", text=first_text)
     analysis_result = await _call_llm(
         analysis["prompt"],
         system_role=analysis["system"],
+        function_call="analysis",
+        episode_id=episode_id,
+        progress_callback=progress_callback,
     )
 
     analysis_text = analysis_result.get("content", "")
@@ -133,7 +155,26 @@ async def translate_segments(
             end_seg=str(end_idx),
             batch_text=batch_text,
         )
-        result = await _call_llm(tmpl["prompt"], system_role=tmpl["system"])
+
+        batch_msg = (
+            f"[Translation] 第 {batch_idx + 1}/{total_batches} 批 "
+            f"(段落 {start_idx + 1}-{end_idx})..."
+        )
+        if progress_callback:
+            progress_callback(batch_msg)
+
+        batch_start = time.monotonic()
+        result = await _call_llm(
+            tmpl["prompt"],
+            system_role=tmpl["system"],
+            function_call="batch_translate",
+            episode_id=episode_id,
+            progress_callback=progress_callback,
+        )
+        batch_elapsed = time.monotonic() - batch_start
+
+        if progress_callback:
+            progress_callback(f"{batch_msg} 完成 ({batch_elapsed:.1f}s)")
 
         # 解析返回的翻译结果
         content = result.get("content", "")
@@ -167,7 +208,24 @@ async def translate_segments(
             await asyncio.sleep(0.5)
 
     # 生成摘要
-    summary_data = await _generate_summary_from_batches(translated_segments, tone_analysis)
+    if skip_summary:
+        summary_data: dict[str, Any] = {
+            "summary_zh": "",
+            "key_points": [],
+            "episode_title_zh": "",
+        }
+        if progress_callback:
+            progress_callback("[Translation] 跳过摘要生成")
+    else:
+        if progress_callback:
+            progress_callback("[Translation] 正在生成摘要...")
+        summary_data = await _generate_summary_from_batches(
+            translated_segments, tone_analysis, progress_callback=progress_callback
+        )
+
+    total_elapsed = time.monotonic() - total_start
+    if progress_callback:
+        progress_callback(f"[Translation] 翻译完成 (总耗时 {total_elapsed:.1f}s)")
 
     return {
         "summary_zh": summary_data.get("summary_zh", ""),
@@ -181,13 +239,16 @@ async def translate_segments(
 
 
 async def generate_summary(
-    translated_segments: list[dict[str, Any]], full_text: str | None = None
+    translated_segments: list[dict[str, Any]],
+    full_text: str | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """基于已翻译的段落生成摘要。
 
     Args:
         translated_segments: 翻译后的段落列表。
         full_text: 可选的完整翻译文本。
+        progress_callback: 可选进度回调。
 
     Returns:
         dict 包含 summary_zh, key_points, episode_title_zh。
@@ -198,7 +259,12 @@ async def generate_summary(
         sample = "\n".join(s.get("zh", "") for s in translated_segments if s.get("zh"))[:5000]
 
     tmpl = PromptLoader.get("translator.summary", sample=sample)
-    result = await _call_llm(tmpl["prompt"], system_role=tmpl["system"])
+    result = await _call_llm(
+        tmpl["prompt"],
+        system_role=tmpl["system"],
+        function_call="summary",
+        progress_callback=progress_callback,
+    )
 
     content = result.get("content", "")
     return _parse_summary(content)
@@ -224,6 +290,10 @@ async def _call_llm(
     user_prompt: str,
     system_role: str = "",
     temperature: float | None = None,
+    *,
+    function_call: str = "unknown",
+    episode_id: int | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """通用 LLM API 调用，通过 ProviderResolver 路由到不同后端。
 
@@ -235,7 +305,15 @@ async def _call_llm(
 
     for cfg in ProviderResolver.resolve("translator"):
         try:
-            return await _call_llm_with_config(user_prompt, system_role, temperature, cfg)
+            return await _call_llm_with_config(
+                user_prompt,
+                system_role,
+                temperature,
+                cfg,
+                function_call=function_call,
+                episode_id=episode_id,
+                progress_callback=progress_callback,
+            )
         except (httpx.HTTPStatusError, httpx.TimeoutException) as e:
             if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
                 raise
@@ -249,6 +327,10 @@ async def _call_llm_with_config(
     system_role: str,
     temperature: float | None,
     cfg: ProviderConfig,
+    *,
+    function_call: str = "unknown",
+    episode_id: int | None = None,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Use a specific ProviderConfig to call the LLM API with retries."""
     provider = cfg.name
@@ -261,6 +343,7 @@ async def _call_llm_with_config(
     model = cfg.model or _DEFAULT_MODELS.get(provider, "")
     if temperature is None:
         temperature = float(cfg.extra.get("temperature", 0.3))
+    timeout = float(cfg.extra.get("timeout", 300.0))
 
     if not api_key:
         raise RuntimeError(
@@ -290,7 +373,7 @@ async def _call_llm_with_config(
     last_error: Exception | None = None
     for attempt in range(_MAX_RETRIES):
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 resp = await client.post(
                     api_url,
                     headers=headers,
@@ -308,29 +391,23 @@ async def _call_llm_with_config(
 
         except httpx.HTTPStatusError as e:
             last_error = e
-            if e.response.status_code == 429:
-                wait = _RETRY_DELAY * (2**attempt)
-                await asyncio.sleep(wait)
-                continue
-            elif e.response.status_code in (400, 401, 403):
+            if e.response.status_code in (400, 401, 403):
                 raise RuntimeError(
                     f"{provider} API 认证失败 (status={e.response.status_code}): "
                     f"{e.response.text[:200]}"
                 )
-            else:
-                if attempt < _MAX_RETRIES - 1:
-                    await asyncio.sleep(_RETRY_DELAY)
-                    continue
+            # 429, 5xx: retryable
         except (httpx.RequestError, httpx.TimeoutException) as e:
             last_error = e
-            if attempt < _MAX_RETRIES - 1:
-                await asyncio.sleep(_RETRY_DELAY * (2**attempt))
-                continue
         except (KeyError, json.JSONDecodeError) as e:
             last_error = e
-            if attempt < _MAX_RETRIES - 1:
-                await asyncio.sleep(_RETRY_DELAY)
-                continue
+
+        if attempt < _MAX_RETRIES - 1:
+            wait = _backoff_delay(attempt)
+            if progress_callback:
+                progress_callback(f"[Translation] API 调用失败，第 {attempt + 1} 次重试...")
+            await asyncio.sleep(wait)
+            continue
 
     raise RuntimeError(f"{provider} API 调用失败（已重试 {_MAX_RETRIES} 次）: {last_error}")
 
@@ -415,6 +492,7 @@ def _parse_summary(content: str) -> dict[str, Any]:
 async def _generate_summary_from_batches(
     translated_segments: list[dict[str, Any]],
     tone_analysis: str,
+    progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """基于所有翻译段落生成摘要。"""
     sample_text = "\n".join(s.get("zh", "") for s in translated_segments if s.get("zh"))
@@ -440,6 +518,11 @@ async def _generate_summary_from_batches(
         tone_analysis=tone_analysis,
         sample=sample_text,
     )
-    result = await _call_llm(tmpl["prompt"], system_role=tmpl["system"])
+    result = await _call_llm(
+        tmpl["prompt"],
+        system_role=tmpl["system"],
+        function_call="summary",
+        progress_callback=progress_callback,
+    )
 
     return _parse_summary(result.get("content", ""))

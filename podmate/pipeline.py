@@ -62,6 +62,7 @@ async def run_pipeline(
     episode_id: int,
     *,
     skip_dub: bool = False,
+    console_log: bool = True,
     progress_callback: object | None = None,
 ) -> dict[str, Any]:
     """运行一集的完整流水线：下载 → 转写 → 翻译 → 配音。
@@ -69,6 +70,7 @@ async def run_pipeline(
     Args:
         episode_id: 剧集 ID
         skip_dub: 跳过配音步骤
+        console_log: 翻译时打印进度到控制台
         progress_callback: 可选回调，接收 PipelineProgress 实例
 
     Returns:
@@ -171,6 +173,7 @@ async def run_pipeline(
             result.get("segments", []),
             batch_size=20,
             episode_id=episode_id,
+            progress_callback=print if console_log else None,
         )
 
         # 保存翻译结果
