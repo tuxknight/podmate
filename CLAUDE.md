@@ -23,7 +23,7 @@ podmate/          - Main Python package
 
 - **Issue specs**: Task specifications live in `issue-specs/` at the project root (e.g., `issue-specs/issue-19.md`). This directory is git-ignored.
 - **Python**: Ruff for linting/formatting. No mypy.
-- **No tests**: This project does not have a test suite. Do not write tests unless asked.
+- **Tests**: pytest with 180+ tests. Run `python -m pytest tests/ -x -q` before PR.
 
 ## Commands
 
