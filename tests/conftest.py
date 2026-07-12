@@ -10,9 +10,11 @@ def temp_db(monkeypatch, tmp_path):
     import podmate.db as db_mod
 
     test_config = {
+        "transcriber": {"provider": "deepgram"},
         "deepgram": {"api_key": "", "api_url": "", "model": "", "diarize": False},
+        "translator": {"provider": "hermes"},
         "deepseek": {"api_key": "", "api_url": "", "model": "", "temperature": 0.3},
-        "dubbing": {"voice": "", "rate": "", "volume": ""},
+        "dubbing": {"provider": "edge-tts", "voice": "", "rate": "", "volume": ""},
         "podcast_index": {"api_key": "", "api_secret": ""},
         "poll": {"interval_hours": 6},
         "storage": {"data_dir": str(tmp_path), "keep_episodes": 5},

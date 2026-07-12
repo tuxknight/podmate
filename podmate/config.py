@@ -10,6 +10,9 @@ CONFIG_DIR = Path.home() / ".config" / "podmate"
 CONFIG_PATH = CONFIG_DIR / "config.toml"
 
 DEFAULT_CONFIG: dict[str, Any] = {
+    "transcriber": {
+        "provider": "deepgram",
+    },
     "deepgram": {
         "api_key": "",
         "api_url": "https://api.deepgram.com/v1/listen",
@@ -32,6 +35,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "temperature": 0.3,
     },
     "dubbing": {
+        "provider": "edge-tts",
         "voice": "zh-CN-YunyangNeural",
         "rate": "+0%",
         "volume": "+0%",
