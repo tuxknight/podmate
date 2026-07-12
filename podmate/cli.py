@@ -245,11 +245,18 @@ export_app = typer.Typer(
     no_args_is_help=True,
     rich_markup_mode="rich",
 )
+log_app = typer.Typer(
+    name="log",
+    help="管理 API 调用日志",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
 
 app.add_typer(feed_app)
 app.add_typer(episode_app)
 app.add_typer(ep_app)
 app.add_typer(export_app)
+app.add_typer(log_app)
 
 
 @app.callback()
@@ -1805,6 +1812,93 @@ def _cmd_export_index() -> None:
 export_app.command(name="episode")(_cmd_export_episode)
 export_app.command(name="sync")(_cmd_export_sync)
 export_app.command(name="index")(_cmd_export_index)
+
+
+# ═══════════════════════════════════════════════════
+# log 命令组
+# ═══════════════════════════════════════════════════
+
+
+@log_app.command(name="show")
+def _cmd_log_show(
+    episode: int | None = typer.Option(None, "--episode", "-e", help="按剧集 ID 筛选"),
+    stats: bool = typer.Option(False, "--stats", help="显示汇总统计"),
+    tail: int = typer.Option(20, "--tail", "-n", help="显示最近 N 条记录"),
+) -> None:
+    """查看 API 调用日志。"""
+    from .api_logger import get_stats, read_logs
+
+    if stats:
+        data = get_stats(episode_id=episode)
+        if data["total_calls"] == 0:
+            console.print("[yellow]No log records yet[/yellow]")
+            return
+
+        table = Table(title="API 调用统计", box=box.ROUNDED, header_style="bold cyan")
+        table.add_column("指标", style="bold")
+        table.add_column("值")
+
+        table.add_row("Total calls", str(data["total_calls"]))
+        table.add_row("Success rate", f"{data['success_rate']}%")
+        table.add_row("Avg duration", f"{data['avg_duration_sec']}s")
+        table.add_row("Total tokens in", str(data["total_tokens_input"]))
+        table.add_row("Total tokens out", str(data["total_tokens_output"]))
+
+        console.print(table)
+
+        failed = data.get("failed_calls", [])
+        if failed:
+            console.print()
+            ftable = Table(
+                title=f"Failed calls ({len(failed)})",
+                box=box.ROUNDED,
+                header_style="bold red",
+            )
+            ftable.add_column("Time")
+            ftable.add_column("Function")
+            ftable.add_column("Error")
+            for fc in failed:
+                ftable.add_row(
+                    fc.get("timestamp", ""),
+                    fc.get("function", ""),
+                    str(fc.get("error", ""))[:80],
+                )
+            console.print(ftable)
+        return
+
+    entries = read_logs(episode_id=episode, limit=tail)
+    if not entries:
+        console.print("[yellow]No log records yet[/yellow]")
+        return
+
+    table = Table(
+        title="API 调用日志",
+        box=box.ROUNDED,
+        header_style="bold cyan",
+    )
+    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("Time")
+    table.add_column("Provider")
+    table.add_column("Function", style="green")
+    table.add_column("Duration", justify="right")
+    table.add_column("Status")
+    table.add_column("Tokens (in/out)", justify="right")
+
+    for i, entry in enumerate(entries, start=1):
+        ts = entry.get("timestamp", "").replace("T", " ").replace("Z", "")
+        status_str = "[green]OK[/green]" if entry.get("success") else "[red]FAIL[/red]"
+        tokens = f"{entry.get('tokens_input', 0)}/{entry.get('tokens_output', 0)}"
+        table.add_row(
+            str(i),
+            ts,
+            entry.get("provider", ""),
+            entry.get("function", ""),
+            f"{entry.get('duration_sec', 0):.2f}s",
+            status_str,
+            tokens,
+        )
+
+    console.print(table)
 
 
 # ═══════════════════════════════════════════════════
