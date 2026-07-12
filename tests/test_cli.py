@@ -50,6 +50,7 @@ from podmate.translator import (
     _parse_summary,
     translate_segments,
 )
+from podmate.provider import ProviderConfig
 
 runner = CliRunner()
 
@@ -3083,8 +3084,18 @@ def test_translate_segments_no_api_key():
     """translate_segments raises RuntimeError when no API key configured."""
     segments = [{"id": 0, "start": 0.0, "end": 5.0, "text": "Hello world."}]
     with (
-        patch("podmate.translator._get_provider", return_value="deepseek"),
-        patch("podmate.translator._get_api_key", return_value=""),
+        patch(
+            "podmate.translator.ProviderResolver.resolve",
+            return_value=[
+                ProviderConfig(
+                    name="deepseek",
+                    api_key="",
+                    api_url="https://api.deepseek.com/v1/chat/completions",
+                    model="deepseek-chat",
+                )
+            ],
+        ),
+        patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}),
     ):
         with pytest.raises(RuntimeError, match="未设置 deepseek API key"):
             import asyncio
@@ -3094,9 +3105,16 @@ def test_translate_segments_no_api_key():
 
 def test_translate_segments_empty():
     """translate_segments raises ValueError when segments is empty."""
-    with (
-        patch("podmate.translator._get_provider", return_value="deepseek"),
-        patch("podmate.translator._get_api_key", return_value="sk-test"),
+    with patch(
+        "podmate.translator.ProviderResolver.resolve",
+        return_value=[
+            ProviderConfig(
+                name="deepseek",
+                api_key="sk-test",
+                api_url="https://api.deepseek.com/v1/chat/completions",
+                model="deepseek-chat",
+            )
+        ],
     ):
         with pytest.raises(ValueError, match="转写段落为空"):
             import asyncio
@@ -3178,8 +3196,17 @@ def test_parse_summary_empty():
 
 async def test_translate_segments_success(monkeypatch):
     """translate_segments returns translated segments with mocked API."""
-    monkeypatch.setattr("podmate.translator._get_provider", lambda: "deepseek")
-    monkeypatch.setattr("podmate.translator._get_api_key", lambda x="deepseek": "sk-test")
+    monkeypatch.setattr(
+        "podmate.translator.ProviderResolver.resolve",
+        lambda capability="translator": [
+            ProviderConfig(
+                name="deepseek",
+                api_key="sk-test",
+                api_url="https://api.deepseek.com/v1/chat/completions",
+                model="deepseek-chat",
+            )
+        ],
+    )
 
     segments = [
         {"id": 0, "start": 0.0, "end": 5.0, "text": "Hello world."},
@@ -3481,7 +3508,10 @@ def test_parse_deepgram_response_empty():
 
 def test_transcribe_via_deepgram_no_api_key():
     """transcribe_via_deepgram raises RuntimeError when API key missing."""
-    with patch("podmate.transcriber._get_deepgram_api_key", return_value=""):
+    with patch(
+        "podmate.transcriber.ProviderResolver.get_config",
+        return_value=ProviderConfig(name="deepgram", api_key=""),
+    ):
         with pytest.raises(RuntimeError, match="未设置 Deepgram API key"):
             import asyncio
 
@@ -3490,7 +3520,10 @@ def test_transcribe_via_deepgram_no_api_key():
 
 def test_transcribe_via_deepgram_file_not_found():
     """transcribe_via_deepgram raises FileNotFoundError for missing file."""
-    with patch("podmate.transcriber._get_deepgram_api_key", return_value="test-key"):
+    with patch(
+        "podmate.transcriber.ProviderResolver.get_config",
+        return_value=ProviderConfig(name="deepgram", api_key="test-key"),
+    ):
         with pytest.raises(FileNotFoundError, match="音频文件不存在"):
             import asyncio
 
@@ -3540,7 +3573,10 @@ async def test_transcribe_via_deepgram_success(tmp_path):
     mock_ctx.__aexit__ = AsyncMock(return_value=None)
 
     with (
-        patch("podmate.transcriber._get_deepgram_api_key", return_value="test-key"),
+        patch(
+            "podmate.transcriber.ProviderResolver.get_config",
+            return_value=ProviderConfig(name="deepgram", api_key="test-key"),
+        ),
         patch("podmate.transcriber.httpx.AsyncClient", return_value=mock_ctx),
     ):
         result = await transcribe_via_deepgram(str(audio))
