@@ -448,6 +448,7 @@ def _update_podcasts_index(export_dir: str) -> None:
             # Try parsing standard HTTP date format → ISO date
             try:
                 from email.utils import parsedate_to_datetime
+
                 parsed = parsedate_to_datetime(pub_date.split(" GMT")[0])
                 date_cell = parsed.strftime("%Y-%m-%d")
             except Exception:

@@ -1677,6 +1677,7 @@ def _export_with_metadata(src: Path, dest: Path, ep: Episode) -> None:
             fm_text = "\n".join(lines[1:end_idx])
             try:
                 import yaml as _yaml
+
                 fm = _yaml.safe_load(fm_text)
                 if isinstance(fm, dict):
                     existing_description = fm.get("description")

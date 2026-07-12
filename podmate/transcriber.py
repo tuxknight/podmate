@@ -171,11 +171,9 @@ async def _transcribe_via_whisper_api(
     api_key = cfg.api_key
     if not api_key:
         raise RuntimeError(
-
-                "未设置 Whisper API key。\n"
-                "请运行: podmate config set transcriber.whisper-api.api_key "
-                "'your_key_here'"
-
+            "未设置 Whisper API key。\n"
+            "请运行: podmate config set transcriber.whisper-api.api_key "
+            "'your_key_here'"
         )
 
     if not os.path.isfile(audio_path):
