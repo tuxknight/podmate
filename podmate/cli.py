@@ -1452,6 +1452,91 @@ def _cmd_episode_transcribe(
     console.print(f"[green]✅ 转写完成 ({lang}, {seg_count} 段): {transcript_path}[/green]")
 
 
+def _cmd_episode_translate(
+    episode_id: int = typer.Argument(..., help="要翻译的剧集 ID"),
+    batch_size: int = typer.Option(20, "--batch-size", "-b", help="每批处理的段落数"),
+    skip_summary: bool = typer.Option(False, "--skip-summary", help="跳过摘要生成"),
+    force: bool = typer.Option(False, "--force", "-f", help="强制重新翻译"),
+) -> None:
+    """翻译剧集转写稿（需先完成转写）。"""
+    from .pipeline import _build_zh_md
+    from .translator import translate_segments
+
+    ep = get_episode(episode_id)
+    if not ep:
+        console.print(f"[red]❌ 未找到剧集 ID: {episode_id}[/red]")
+        raise typer.Exit(code=1)
+
+    if not ep.transcript_path:
+        console.print("[yellow]📝 该剧集尚未转写，请先转写[/yellow]")
+        console.print(
+            f"[dim]提示: 先运行 [cyan]podmate episode transcribe {episode_id}[/cyan][/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    translation_path = _get_data_path(ep.guid, "translations")
+
+    if os.path.isfile(translation_path) and not force:
+        console.print(
+            f"[yellow]🌐 翻译已存在: {translation_path}[/yellow]\n"
+            "[dim]使用 --force 强制重新翻译[/dim]"
+        )
+        return
+
+    with open(ep.transcript_path) as f:
+        transcript = json.load(f)
+
+    segments = transcript.get("segments", [])
+    if not segments:
+        console.print("[red]❌ 转写段落为空，无法翻译[/red]")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold]🌐 正在翻译:[/bold] [cyan]{ep.title}[/cyan]")
+    update_episode_status(episode_id, "translating", progress=0.0)
+
+    try:
+        result = asyncio.run(
+            translate_segments(
+                segments,
+                batch_size=batch_size,
+                episode_id=episode_id,
+                skip_summary=skip_summary,
+                progress_callback=console.print,
+            )
+        )
+    except Exception as e:
+        update_episode_status(episode_id, "error", progress=0.0, error_message=str(e))
+        console.print(f"[red]❌ 翻译失败: {e}[/red]")
+        raise typer.Exit(code=1)
+
+    os.makedirs(os.path.dirname(translation_path), exist_ok=True)
+    with open(translation_path, "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2)
+
+    zh_md_path = Path(translation_path).with_suffix(".zh.md")
+    zh_md_content = _build_zh_md(result, ep.title, ep.feed_title or "")
+    zh_md_path.write_text(zh_md_content, encoding="utf-8")
+
+    set_episode_path(episode_id, "translation_path", translation_path)
+    update_episode_status(episode_id, "translated", progress=1.0)
+
+    cbrain_dir = load_config().get("storage", {}).get("cbrain_dir", "")
+    if cbrain_dir:
+        cbrain_podcasts = Path(os.path.expanduser(cbrain_dir))
+    else:
+        cbrain_podcasts = Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
+
+    try:
+        cbrain_podcasts.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(zh_md_path, cbrain_podcasts / zh_md_path.name)
+        console.print(f"[green]📚 已同步到 cbrain: {cbrain_podcasts / zh_md_path.name}[/green]")
+    except OSError:
+        pass
+
+    seg_count = len(result.get("segments", []))
+    console.print(f"[green]✅ 翻译完成 ({seg_count} 段): {translation_path}[/green]")
+
+
 def _cmd_episode_process(
     episode_id: int = typer.Argument(..., help="要处理的剧集 ID"),
     skip_dub: bool = typer.Option(False, "--skip-dub", help="跳过中文配音步骤"),
@@ -1509,8 +1594,10 @@ episode_app.command(name="show")(_cmd_episode_show)
 episode_app.command(name="mark")(_cmd_episode_mark)
 episode_app.command(name="download")(_cmd_episode_download)
 episode_app.command(name="transcribe")(_cmd_episode_transcribe)
+episode_app.command(name="translate")(_cmd_episode_translate)
 episode_app.command(name="process")(_cmd_episode_process)
 
+ep_app.command(name="translate")(_cmd_episode_translate)
 ep_app.command(name="list")(_cmd_episode_list)
 ep_app.command(name="show")(_cmd_episode_show)
 ep_app.command(name="mark")(_cmd_episode_mark)
