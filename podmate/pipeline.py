@@ -21,7 +21,7 @@ from .db import (
 )
 from .downloader import download_episode
 from .dubbing import dub_translation
-from .transcriber import format_transcript, transcribe_via_deepgram
+from .transcriber import _format_time, format_transcript, transcribe_via_deepgram
 from .translator import translate_segments
 
 DATA_DIR = os.path.expanduser(load_config()["storage"]["data_dir"])
@@ -100,6 +100,12 @@ async def run_pipeline(
     for p in [audio_path, transcript_path, translation_path, dub_path]:
         os.makedirs(os.path.dirname(p), exist_ok=True)
 
+    cbrain_dir = load_config().get("storage", {}).get("cbrain_dir", "")
+    if cbrain_dir:
+        cbrain_podcasts = Path(os.path.expanduser(cbrain_dir))
+    else:
+        cbrain_podcasts = Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
+
     try:
         # ── 下载（跳过已存在的文件） ────────────────────
         if os.path.exists(audio_path) and os.path.getsize(audio_path) > 1024:
@@ -143,11 +149,6 @@ async def run_pipeline(
 
         # ── 导出到 cbrain ────────────────────────────
         exported_to_cbrain = False
-        cbrain_dir = load_config().get("storage", {}).get("cbrain_dir", "")
-        if cbrain_dir:
-            cbrain_podcasts = Path(os.path.expanduser(cbrain_dir))
-        else:
-            cbrain_podcasts = Path.home() / "cbrain" / "docs" / "fuyuans-kb" / "podcasts"
 
         md_path = Path(transcript_path).with_suffix(".md")
         if md_path.exists():
@@ -178,6 +179,14 @@ async def run_pipeline(
 
         set_episode_path(episode_id, "translation_path", translation_path)
         update_episode_status(episode_id, "translated", progress=1.0)
+
+        # ── 生成中文翻译 Markdown ─────────────────
+        zh_md_path = Path(translation_path).with_suffix(".zh.md")
+        zh_md_content = _build_zh_md(translation, ep.title, ep.feed_title or "")
+        zh_md_path.write_text(zh_md_content, encoding="utf-8")
+
+        cbrain_podcasts.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(zh_md_path, cbrain_podcasts / zh_md_path.name)
 
         summary = translation.get("summary_zh", "")
         _emit("translated", 1.0, f"翻译完成: {summary}")
@@ -299,6 +308,98 @@ def _extract_title_from_md(md_path: Path) -> str:
     return md_path.stem
 
 
+def _extract_description_from_md(md_path: Path) -> str | None:
+    """Extract description from .md file YAML frontmatter."""
+    text = md_path.read_text(encoding="utf-8")
+
+    if text.startswith("---\n"):
+        parts = text.split("---\n", 2)
+        if len(parts) >= 3:
+            try:
+                fm = yaml.safe_load(parts[1])
+                if isinstance(fm, dict) and fm.get("description"):
+                    return str(fm["description"])
+            except yaml.YAMLError:
+                pass
+
+    return None
+
+
+def format_translation_md(
+    translation: dict[str, Any],
+    title: str = "",
+) -> str:
+    """将翻译结果格式化为中文 Markdown 文稿。"""
+    segments = translation.get("segments", [])
+    summary_zh = translation.get("summary_zh", "")
+    key_points = translation.get("key_points", [])
+    episode_title_zh = translation.get("episode_title_zh", "")
+
+    display_title = episode_title_zh or title or "Untitled"
+
+    lines: list[str] = []
+    lines.append(f"# {display_title}")
+    lines.append("")
+
+    if summary_zh:
+        lines.append("## 摘要")
+        lines.append("")
+        lines.append(summary_zh)
+        lines.append("")
+
+    if key_points:
+        lines.append("## 关键要点")
+        lines.append("")
+        for kp in key_points:
+            lines.append(f"- {kp}")
+        lines.append("")
+
+    if segments:
+        lines.append("## 中文翻译稿")
+        lines.append("")
+
+        for seg in segments:
+            start_str = _format_time(seg.get("start", 0.0))
+            end_str = _format_time(seg.get("end", 0.0))
+            speaker = seg.get("speaker_name", "") or seg.get("speaker", "")
+            zh_text = seg.get("zh", "")
+
+            if not zh_text:
+                continue
+
+            lines.append(f"**[{start_str} → {end_str}] {speaker}**")
+            lines.append(zh_text)
+            lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    lines.append("*由 PodMate 自动翻译 (DeepSeek)*")
+
+    return "\n".join(lines)
+
+
+def _build_zh_md(
+    translation: dict[str, Any],
+    title: str,
+    feed_title: str,
+) -> str:
+    """构建完整的 .zh.md 内容：YAML frontmatter + format_translation_md 输出。"""
+    episode_title_zh = translation.get("episode_title_zh", "") or title
+    summary_zh = translation.get("summary_zh", "")
+
+    meta_lines = ["---"]
+    meta_lines.append(f'title: "{episode_title_zh}"')
+    if feed_title:
+        meta_lines.append(f'source: "{feed_title}"')
+    if summary_zh:
+        meta_lines.append(f'description: "{summary_zh}"')
+    meta_lines.append("---")
+    meta_lines.append("")
+
+    body = format_translation_md(translation, title=title)
+    return "\n".join(meta_lines) + body
+
+
 def _update_podcasts_index(export_dir: str) -> None:
     """扫描 export_dir 中的 .md 转写稿，重建 index.md。
 
@@ -365,19 +466,29 @@ def _update_podcasts_index(export_dir: str) -> None:
             feed_title = ep_meta.get("feed_title") or ""
             source_cell = feed_title if feed_title else "—"
 
-            description = ep_meta.get("description") or ""
-            # Skip sponsor/ads leading paragraph — they start with "Brought to You By"
-            desc_clean = description
-            for prefix in ("Brought to You By", "This episode is", "This podcast is", "Check out"):
-                if desc_clean.strip().startswith(prefix):
-                    # Find first sentence boundary after the ad block
-                    for sep in ("If you", "In today", "In this", "Today we", "We cover"):
-                        idx = desc_clean.find(sep)
-                        if idx >= 0:
-                            desc_clean = desc_clean[idx:]
-                            break
-                    break
-            desc_cell = _truncate_text(desc_clean, 80) if desc_clean else "—"
+            # 优先读 .zh.md frontmatter description → .md frontmatter → DB 回退
+            desc_cell = "—"
+            zh_file_path = zh_file
+            if zh_file_path:
+                zh_desc = _extract_description_from_md(zh_file_path)
+                if zh_desc:
+                    desc_cell = _truncate_text(zh_desc, 80)
+            if desc_cell == "—" and en_file:
+                en_desc = _extract_description_from_md(en_file)
+                if en_desc:
+                    desc_cell = _truncate_text(en_desc, 80)
+            if desc_cell == "—":
+                description = ep_meta.get("description") or ""
+                desc_clean = description
+                for prefix in ("Brought to You By", "This episode is", "This podcast is", "Check out"):
+                    if desc_clean.strip().startswith(prefix):
+                        for sep in ("If you", "In today", "In this", "Today we", "We cover"):
+                            idx = desc_clean.find(sep)
+                            if idx >= 0:
+                                desc_clean = desc_clean[idx:]
+                                break
+                        break
+                desc_cell = _truncate_text(desc_clean, 80) if desc_clean else "—"
 
             lines.append(
                 f"| {i} | {title_cell} | {date_cell} | {duration_cell} "

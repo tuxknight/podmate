@@ -1211,18 +1211,29 @@ def _episode_show_logic(episode_id_str: str, id_opt: int | None = None) -> None:
         console.print(f"[red]❌ 未找到剧集 ID: {episode_id_int}[/red]")
         raise typer.Exit(code=1)
 
+    from .pipeline import _extract_description_from_md
+
     lines = [
         f"[bold]{ep.title}[/bold]",
     ]
 
-    if ep.description:
-        clean_desc = re.sub(r"<[^>]+>", "", ep.description).strip()
-        if clean_desc:
-            if len(clean_desc) > 500:
-                clean_desc = clean_desc[:500] + "…"
-            lines.append("")
-            lines.append("[bold]📝 描述:[/bold]")
-            lines.append(clean_desc)
+    # 优先读 .zh.md frontmatter description → .md → DB 回退
+    show_desc: str | None = None
+    if ep.translation_path:
+        zh_md_path = Path(ep.translation_path).with_suffix(".zh.md")
+        if zh_md_path.is_file():
+            show_desc = _extract_description_from_md(zh_md_path)
+    if not show_desc and ep.transcript_path:
+        en_md_path = Path(ep.transcript_path).with_suffix(".md")
+        if en_md_path.is_file():
+            show_desc = _extract_description_from_md(en_md_path)
+    if not show_desc and ep.description:
+        show_desc = re.sub(r"<[^>]+>", "", ep.description).strip()
+
+    if show_desc:
+        lines.append("")
+        lines.append("[bold]📝 描述:[/bold]")
+        lines.append(show_desc)
 
     lines += [
         "",
@@ -1617,6 +1628,11 @@ def _cmd_export_sync(
             if json_src.is_file():
                 shutil.copy2(json_src, cbrain_dir / json_src.name)
                 copied = True
+        if ep.translation_path:
+            zh_md_src = Path(ep.translation_path).with_suffix(".zh.md")
+            if zh_md_src.is_file():
+                shutil.copy2(zh_md_src, cbrain_dir / zh_md_src.name)
+                copied = True
         if copied:
             mark_episode_exported(ep.id)
             exported += 1
@@ -1629,13 +1645,22 @@ def _export_with_metadata(src: Path, dest: Path, ep: Episode) -> None:
     """将文字稿复制到目标路径，并附加剧集元数据头部。"""
     content = src.read_text(encoding="utf-8")
 
-    # 去掉可能已存在的元数据头部（以 --- 围起来的部分）
+    # 提取已有 frontmatter 中的 description（如果有）
+    existing_description = None
     lines = content.split("\n")
     if lines and lines[0].strip() == "---":
         end_idx = 1
         while end_idx < len(lines) and lines[end_idx].strip() != "---":
             end_idx += 1
         if end_idx < len(lines):
+            fm_text = "\n".join(lines[1:end_idx])
+            try:
+                import yaml as _yaml
+                fm = _yaml.safe_load(fm_text)
+                if isinstance(fm, dict):
+                    existing_description = fm.get("description")
+            except Exception:
+                pass
             content = "\n".join(lines[end_idx + 1 :])
 
     # 构建元数据
@@ -1645,7 +1670,9 @@ def _export_with_metadata(src: Path, dest: Path, ep: Episode) -> None:
         meta_lines.append(f'source: "{ep.feed_title}"')
     if ep.pub_date:
         meta_lines.append(f'date: "{ep.pub_date[:10]}"')
-    if ep.description:
+    if existing_description:
+        meta_lines.append(f'description: "{existing_description}"')
+    elif ep.description:
         # 简短摘录作为 description
         desc_short = _strip_html(ep.description)[:300].replace('"', "'")
         meta_lines.append(f'description: "{desc_short}"')
