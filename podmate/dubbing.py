@@ -9,20 +9,9 @@ import tempfile
 from typing import Any
 
 import edge_tts
+import httpx
 
-from .config import get as config_get
-
-
-def _get_dub_voice() -> str:
-    return config_get("dubbing", "voice", "zh-CN-YunyangNeural")
-
-
-def _get_dub_rate() -> str:
-    return config_get("dubbing", "rate", "+0%")
-
-
-def _get_dub_volume() -> str:
-    return config_get("dubbing", "volume", "+0%")
+from .provider import ProviderResolver
 
 
 _MAX_CHUNK_CHARS = 3000  # edge-tts max chars per call
@@ -96,6 +85,10 @@ async def dub_translation(
 
     if episode_id is not None:
         update_episode_status(episode_id, "dubbing", progress=0.0)
+
+    provider = ProviderResolver.get_capability("dubbing")
+    if provider == "openai":
+        return await _dub_via_openai_tts(segments, output_path, episode_id)
 
     speakers = set(s.get("speaker", "") for s in segments if s.get("speaker"))
     needs_multi_voice = len(speakers) >= 2
@@ -174,12 +167,14 @@ async def dub_translation(
         if not full_text.strip():
             raise ValueError("翻译文本为空，无法配音")
 
-        if voice is None:
-            voice = _get_dub_voice()
-        if rate is None:
-            rate = _get_dub_rate()
-        if volume is None:
-            volume = _get_dub_volume()
+        if any(x is None for x in (voice, rate, volume)):
+            cfg = ProviderResolver.get_config("dubbing")
+            if voice is None:
+                voice = cfg.extra.get("voice", "zh-CN-YunyangNeural")
+            if rate is None:
+                rate = cfg.extra.get("rate", "+0%")
+            if volume is None:
+                volume = cfg.extra.get("volume", "+0%")
 
         _dub_text(full_text, output_path, voice, rate, volume)
 
@@ -190,6 +185,85 @@ async def dub_translation(
 
 
 # ── 内部函数 ────────────────────────────────────────
+
+
+async def _dub_via_openai_tts(
+    segments: list[dict[str, Any]],
+    output_path: str,
+    episode_id: int | None = None,
+) -> str:
+    """使用 OpenAI TTS API 生成配音。"""
+    cfg = ProviderResolver.get_config("dubbing", "openai")
+    api_key = cfg.api_key
+    if not api_key:
+        raise RuntimeError(
+            "未设置 OpenAI API key。\n请运行: podmate config set openai.api_key 'your_key_here'"
+        )
+
+    zh_texts = [seg.get("zh", "") for seg in segments if seg.get("zh", "").strip()]
+    full_text = "。".join(zh_texts)
+    if not full_text.endswith(("。", "！", "？", "...")):
+        full_text += "。"
+
+    if not full_text.strip():
+        raise ValueError("翻译文本为空，无法配音")
+
+    model = cfg.model or "tts-1"
+    voice = cfg.extra.get("voice", "alloy")
+    api_url = cfg.api_url or "https://api.openai.com/v1/audio/speech"
+
+    # OpenAI TTS has ~4096 char limit per request, split if needed
+    max_chars = cfg.extra.get("max_chars", 4000)
+    if len(full_text) <= max_chars:
+        await _openai_tts_chunk(full_text, output_path, api_key, api_url, model, voice)
+    else:
+        chunks = _split_text(full_text, max_chars)
+        temp_files: list[str] = []
+        try:
+            for i, chunk in enumerate(chunks):
+                fd, tmp = tempfile.mkstemp(suffix=f"_tts_{i:04d}.mp3")
+                os.close(fd)
+                temp_files.append(tmp)
+                await _openai_tts_chunk(chunk, tmp, api_key, api_url, model, voice)
+            _concat_audio(temp_files, output_path)
+        finally:
+            for tmp in temp_files:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+
+    if episode_id is not None:
+        from .db import update_episode_status
+
+        update_episode_status(episode_id, "dubbed", progress=1.0)
+
+    return output_path
+
+
+async def _openai_tts_chunk(
+    text: str,
+    output_path: str,
+    api_key: str,
+    api_url: str,
+    model: str,
+    voice: str,
+) -> None:
+    """调用 OpenAI TTS API 生成单段音频。"""
+    payload = {
+        "model": model,
+        "input": text,
+        "voice": voice,
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(api_url, headers=headers, json=payload)
+        resp.raise_for_status()
+        with open(output_path, "wb") as f:
+            f.write(resp.content)
 
 
 def _dub_text(
@@ -203,9 +277,9 @@ def _dub_text(
 
     如果文本长度超过 _MAX_CHUNK_CHARS，自动分段生成后用 ffmpeg 拼接。
     """
-    voice = voice or _get_dub_voice()
-    rate = rate or _get_dub_rate()
-    volume = volume or _get_dub_volume()
+    voice = voice or "zh-CN-YunyangNeural"
+    rate = rate or "+0%"
+    volume = volume or "+0%"
     if len(text) <= _MAX_CHUNK_CHARS:
         # 单段直接生成
         asyncio.run(_generate_audio(text, output_path, voice, rate, volume))

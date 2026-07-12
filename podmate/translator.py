@@ -10,7 +10,8 @@ from typing import Any
 
 import httpx
 
-from .config import get as config_get
+from .prompts import PromptLoader
+from .provider import ProviderConfig, ProviderResolver
 
 _HERMES_ENV_LOADED = False
 
@@ -47,27 +48,6 @@ def _maybe_load_hermes_env() -> None:
     _HERMES_ENV_LOADED = True
 
 
-def _get_provider() -> str:
-    return config_get("translator", "provider", "hermes")
-
-
-def _get_api_key(section: str = "deepseek") -> str:
-    # Try loading from .hermes/.env as a fallback
-    _maybe_load_hermes_env()
-    env_key = os.environ.get(f"{section.upper()}_API_KEY", "")
-    if env_key:
-        return env_key
-    return config_get(section, "api_key", "")
-
-
-def _get_api_url(section: str = "deepseek") -> str:
-    _defaults = {
-        "deepseek": "https://api.deepseek.com/v1/chat/completions",
-        "openai": "https://api.openai.com/v1/chat/completions",
-    }
-    return config_get(section, "api_url", _defaults.get(section, ""))
-
-
 _BATCH_SIZE = 20  # 每批处理的段落数
 _MAX_RETRIES = 3  # API 调用最大重试次数
 _RETRY_DELAY = 2  # 重试等待秒数
@@ -100,24 +80,6 @@ async def translate_segments(
     if episode_id is not None:
         update_episode_status(episode_id, "translating", progress=0.0)
 
-    provider = _get_provider()
-    api_key = ""
-    if provider == "hermes":
-        api_key = os.environ.get("HERMES_API_KEY", "")
-        if not api_key:
-            raise RuntimeError(
-                "未设置 HERMES_API_KEY 环境变量。\n请设置: export HERMES_API_KEY='your_key_here'"
-            )
-    elif provider in ("deepseek", "openai"):
-        api_key = _get_api_key(provider)
-        if not api_key:
-            raise RuntimeError(
-                f"未设置 {provider} API key。\n"
-                f"请运行: podmate config set {provider}.api_key 'your_key_here'"
-            )
-    else:
-        raise ValueError(f"不支持的翻译 provider: {provider}，可选: hermes, deepseek, openai")
-
     if not segments:
         raise ValueError("转写段落为空，无法翻译")
 
@@ -133,24 +95,10 @@ async def translate_segments(
         f"[{s['id']}][Speaker {s.get('speaker', '?')}] {s['text']}" for s in first_batch
     )
 
-    analysis_prompt = (
-        "As a professional podcast analyst, analyze the following transcript excerpt.\n"
-        "Identify:\n"
-        "1. The main topic(s) being discussed\n"
-        "2. The speaker's tone and speaking style"
-        " (e.g., enthusiastic, academic, conversational, dramatic)\n"
-        "3. Any technical terminology or jargon domains\n"
-        "4. Try to identify the real names of each speaker (e.g., DHH, host name)"
-        " based on contextual clues in the conversation.\n\n"
-        f"Transcript:\n{first_text}\n\n"
-        "Return your analysis concisely in Chinese, 100 characters max for tone/style.\n"
-        "Then return speaker mapping in format:\n"
-        "SPEAKER_MAP: A=Real Name, B=Real Name, ..."
-    )
-
+    analysis = PromptLoader.get("translator.analysis", text=first_text)
     analysis_result = await _call_llm(
-        analysis_prompt,
-        system_role="你是一个播客分析专家。用中文简洁回复。",
+        analysis["prompt"],
+        system_role=analysis["system"],
     )
 
     analysis_text = analysis_result.get("content", "")
@@ -176,26 +124,16 @@ async def translate_segments(
 
         batch_text = "\n".join(f"[{s['id']}] {s['text']}" for s in batch)
 
-        # 带上 tone_analysis 保持风格一致
-        system_msg = (
-            "你是一个专业的科技播客中英翻译专家。\n"
-            f"说话风格: {tone_analysis}\n\n"
-            "规则：\n"
-            "1. 将英文翻译为自然、地道的中文口语\n"
-            "2. 保持技术术语的准确性\n"
-            "3. 保持说话人的语气和表达风格\n"
-            "4. 如果原文有口癖、重复、犹豫（um, uh, like），适当省略\n"
-            "5. 长句拆为短句，更符合中文口语习惯\n"
-            "6. 输出格式: [段ID] 翻译文本 | tone: calm/excited/serious/casual"
+        tmpl = PromptLoader.get(
+            "translator.batch_translate",
+            tone_analysis=tone_analysis,
+            batch_num=str(batch_idx + 1),
+            total_batches=str(total_batches),
+            start_seg=str(start_idx + 1),
+            end_seg=str(end_idx),
+            batch_text=batch_text,
         )
-
-        user_prompt = (
-            f"将以下英文播客片段翻译成中文。\n\n"
-            f"这是第 {batch_idx + 1}/{total_batches} 批（段 {start_idx + 1}-{end_idx}）。\n\n"
-            f"{batch_text}"
-        )
-
-        result = await _call_llm(user_prompt, system_role=system_msg)
+        result = await _call_llm(tmpl["prompt"], system_role=tmpl["system"])
 
         # 解析返回的翻译结果
         content = result.get("content", "")
@@ -259,22 +197,8 @@ async def generate_summary(
     else:
         sample = "\n".join(s.get("zh", "") for s in translated_segments if s.get("zh"))[:5000]
 
-    prompt = (
-        "你是一个播客内容分析专家。阅读以下中文翻译稿，生成：\n\n"
-        "1. 中文摘要（200字以内）\n"
-        "2. 3-5个关键话题点\n"
-        "3. 一个吸引人的中文节目标题\n\n"
-        f"原文：\n{sample}\n\n"
-        "输出格式：\n"
-        "标题: <中文标题>\n"
-        "摘要: <摘要>\n"
-        "要点:\n"
-        "- 要点1\n"
-        "- 要点2\n"
-        "- 要点3\n"
-    )
-
-    result = await _call_llm(prompt, system_role="你是一个播客内容分析专家。用中文回复。")
+    tmpl = PromptLoader.get("translator.summary", sample=sample)
+    result = await _call_llm(tmpl["prompt"], system_role=tmpl["system"])
 
     content = result.get("content", "")
     return _parse_summary(content)
@@ -283,43 +207,70 @@ async def generate_summary(
 # ── API 调用 ────────────────────────────────────────
 
 
+_DEFAULT_API_URLS: dict[str, str] = {
+    "hermes": "https://api.hermes.ai/v1/chat/completions",
+    "deepseek": "https://api.deepseek.com/v1/chat/completions",
+    "openai": "https://api.openai.com/v1/chat/completions",
+}
+
+_DEFAULT_MODELS: dict[str, str] = {
+    "hermes": "deepseek-chat",
+    "deepseek": "deepseek-chat",
+    "openai": "gpt-4o-mini",
+}
+
+
 async def _call_llm(
     user_prompt: str,
     system_role: str = "",
     temperature: float | None = None,
 ) -> dict[str, Any]:
-    """通用 LLM API 调用，根据 translator.provider 路由到不同后端。
+    """通用 LLM API 调用，通过 ProviderResolver 路由到不同后端。
 
-    Args:
-        user_prompt: 用户提示。
-        system_role: 系统角色设定。
-        temperature: 生成温度（翻译用低温度，0.3 保持准确）。
-
-    Returns:
-        dict 含 {"content": "...", "model": "...", "usage": {...}}。
+    自动在主 provider 和 fallback 列表间切换：
+    - 认证错误（401/403）直接抛出，不降级
+    - 限流（429）、超时、服务端错误（5xx）→ 试下一个 provider
     """
-    provider = _get_provider()
+    _maybe_load_hermes_env()
 
-    if provider == "hermes":
-        api_key = os.environ.get("HERMES_API_KEY", "")
-        api_url = os.environ.get("HERMES_BASE_URL", "https://api.hermes.ai/v1/chat/completions")
-        model = "deepseek-chat"
-        if temperature is None:
-            temperature = 0.3
-    elif provider in ("deepseek", "openai"):
-        api_key = _get_api_key(provider)
-        api_url = _get_api_url(provider)
-        model = config_get(
-            provider,
-            "model",
-            "deepseek-chat" if provider == "deepseek" else "gpt-4o-mini",
+    for cfg in ProviderResolver.resolve("translator"):
+        try:
+            return await _call_llm_with_config(user_prompt, system_role, temperature, cfg)
+        except (httpx.HTTPStatusError, httpx.TimeoutException) as e:
+            if isinstance(e, httpx.HTTPStatusError) and e.response.status_code in (401, 403):
+                raise
+            continue
+
+    raise RuntimeError("翻译失败：所有 provider 都不可用")
+
+
+async def _call_llm_with_config(
+    user_prompt: str,
+    system_role: str,
+    temperature: float | None,
+    cfg: ProviderConfig,
+) -> dict[str, Any]:
+    """Use a specific ProviderConfig to call the LLM API with retries."""
+    provider = cfg.name
+    api_key = cfg.api_key or os.environ.get(f"{provider.upper()}_API_KEY", "")
+    api_url = (
+        cfg.api_url
+        or os.environ.get(f"{provider.upper()}_BASE_URL", "")
+        or _DEFAULT_API_URLS.get(provider, "")
+    )
+    model = cfg.model or _DEFAULT_MODELS.get(provider, "")
+    if temperature is None:
+        temperature = float(cfg.extra.get("temperature", 0.3))
+
+    if not api_key:
+        raise RuntimeError(
+            f"未设置 {provider} API key。\n"
+            f"请运行: podmate config set {provider}.api_key 'your_key_here'"
         )
-        if temperature is None:
-            temperature = config_get(provider, "temperature", 0.3)
-    else:
-        raise ValueError(f"不支持的翻译 provider: {provider}，可选: hermes, deepseek, openai")
+    if not api_url:
+        raise RuntimeError(f"未设置 {provider} API URL。")
 
-    messages = []
+    messages: list[dict[str, str]] = []
     if system_role:
         messages.append({"role": "system", "content": system_role})
     messages.append({"role": "user", "content": user_prompt})
@@ -329,7 +280,7 @@ async def _call_llm(
         "Content-Type": "application/json",
     }
 
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
@@ -484,19 +435,11 @@ async def _generate_summary_from_batches(
     if len(sample_text) > 6000:
         sample_text = sample_text[:6000]
 
-    prompt = (
-        "你是一个播客内容摘要专家。根据以下中文翻译稿，生成：\n\n"
-        "1. 中文摘要（150-200字，覆盖核心理念和讨论要点）\n"
-        "2. 3-5个关键话题点\n\n"
-        f"说话风格: {tone_analysis}\n\n"
-        f"原文：\n{sample_text}\n\n"
-        "输出格式：\n"
-        "摘要: <摘要>\n"
-        "要点:\n"
-        "- 要点1\n"
-        "- 要点2\n"
+    tmpl = PromptLoader.get(
+        "translator.summary_from_batches",
+        tone_analysis=tone_analysis,
+        sample=sample_text,
     )
-
-    result = await _call_llm(prompt, system_role="你是一个播客分析专家。用中文回复，简洁有力。")
+    result = await _call_llm(tmpl["prompt"], system_role=tmpl["system"])
 
     return _parse_summary(result.get("content", ""))

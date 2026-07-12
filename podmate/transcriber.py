@@ -13,16 +13,8 @@ os.environ.setdefault("CURL_CA_BUNDLE", "")
 
 import httpx
 
-from .config import get as config_get
 from .db import update_episode_status
-
-
-def _get_deepgram_api_key() -> str:
-    return config_get("deepgram", "api_key", "")
-
-
-def _get_deepgram_api_url() -> str:
-    return config_get("deepgram", "api_url", "https://api.deepgram.com/v1/listen")
+from .provider import ProviderResolver
 
 
 # ── 本地 faster-whisper（单例） ────────────────────────
@@ -98,7 +90,11 @@ async def transcribe_via_deepgram(
     audio_path: str,
     episode_id: int | None = None,
 ) -> dict[str, Any]:
-    """使用 Deepgram API 转写音频文件，支持说话人分离（diarization）。
+    """转写音频文件，根据 transcriber.provider 自动选择后端。
+
+    支持:
+    - deepgram (默认): Deepgram nova-2 + diarization
+    - whisper-api: OpenAI Whisper API
 
     Args:
         audio_path: 音频文件路径。
@@ -107,12 +103,18 @@ async def transcribe_via_deepgram(
     Returns:
         dict 包含:
             - text: 完整转写文本
-            - segments: 分段列表
-                        每段: {"id", "start", "end", "text", "speaker"}
+            - segments: 分段列表每段: {"id", "start", "end", "text", "speaker"}
             - language: 语言代码
             - duration_sec: 音频时长（秒）
     """
-    api_key = _get_deepgram_api_key()
+    provider = ProviderResolver.get_capability("transcriber")
+
+    if provider == "whisper-api":
+        return await _transcribe_via_whisper_api(audio_path, episode_id)
+
+    # Deepgram (default)
+    cfg = ProviderResolver.get_config("transcriber")
+    api_key = cfg.api_key
     if not api_key:
         raise RuntimeError(
             "未设置 Deepgram API key。\n请运行: podmate config set deepgram.api_key 'your_key_here'"
@@ -124,33 +126,92 @@ async def transcribe_via_deepgram(
     if episode_id is not None:
         update_episode_status(episode_id, "transcribing", progress=0.3)
 
-    # 读取音频文件
     with open(audio_path, "rb") as f:
         audio_data = f.read()
+
+    api_url = cfg.api_url or "https://api.deepgram.com/v1/listen"
+    model = cfg.model or "nova-2"
+    diarize = str(cfg.extra.get("diarize", True)).lower()
 
     headers = {
         "Authorization": f"Token {api_key}",
     }
 
     params = {
-        "model": "nova-2",
-        "diarize": "true",
-        "punctuate": "true",
-        "smart_format": "true",
+        "model": model,
+        "diarize": diarize,
+        "punctuate": str(cfg.extra.get("punctuate", True)).lower(),
+        "smart_format": str(cfg.extra.get("smart_format", True)).lower(),
         "paragraphs": "true",
     }
 
     async with httpx.AsyncClient(timeout=600.0) as client:
         resp = await client.post(
-            _get_deepgram_api_url(),
+            api_url,
             headers=headers,
             params=params,
-            content=audio_data,  # raw audio bytes
+            content=audio_data,
         )
         resp.raise_for_status()
         data = resp.json()
 
     result = _parse_deepgram_response(data)
+
+    if episode_id is not None:
+        update_episode_status(episode_id, "transcribing", progress=0.9)
+
+    return result
+
+
+async def _transcribe_via_whisper_api(
+    audio_path: str,
+    episode_id: int | None = None,
+) -> dict[str, Any]:
+    """使用 OpenAI Whisper API 转写音频。"""
+    cfg = ProviderResolver.get_config("transcriber", "whisper-api")
+    api_key = cfg.api_key
+    if not api_key:
+        raise RuntimeError(
+            "未设置 Whisper API key。\n请运行: podmate config set transcriber.whisper-api.api_key 'your_key_here'"
+        )
+
+    if not os.path.isfile(audio_path):
+        raise FileNotFoundError(f"音频文件不存在: {audio_path}")
+
+    if episode_id is not None:
+        update_episode_status(episode_id, "transcribing", progress=0.3)
+
+    model = cfg.model or "whisper-1"
+    api_url = cfg.api_url or "https://api.openai.com/v1/audio/transcriptions"
+
+    async with httpx.AsyncClient(timeout=600.0) as client:
+        with open(audio_path, "rb") as f:
+            resp = await client.post(
+                api_url,
+                headers={"Authorization": f"Bearer {api_key}"},
+                files={"file": f},
+                data={"model": model, "response_format": "verbose_json"},
+            )
+        resp.raise_for_status()
+        data = resp.json()
+
+    segments: list[dict[str, Any]] = []
+    for i, seg in enumerate(data.get("segments", [])):
+        segments.append(
+            {
+                "id": i,
+                "start": seg.get("start", 0.0),
+                "end": seg.get("end", 0.0),
+                "text": seg.get("text", "").strip(),
+            }
+        )
+
+    result = {
+        "text": data.get("text", "").strip(),
+        "segments": segments,
+        "language": data.get("language", "en"),
+        "duration_sec": data.get("duration", 0.0),
+    }
 
     if episode_id is not None:
         update_episode_status(episode_id, "transcribing", progress=0.9)
