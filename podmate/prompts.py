@@ -60,7 +60,7 @@ class PromptLoader:
         content = "\n".join(lines).lstrip("\n") + "\n"
         content_lines: list[str] = []
         for raw_line in content.split("\n"):
-            if " = \"" in raw_line and raw_line.strip().endswith('"'):
+            if ' = "' in raw_line and raw_line.strip().endswith('"'):
                 key_part, val_part = raw_line.split(" = ", 1)
                 val_part = val_part.strip('"')
                 val_part = val_part.replace("\\n", "\n")

@@ -220,10 +220,31 @@ app = typer.Typer(
     rich_markup_mode="rich",
 )
 
-feed_app = typer.Typer(name="feed", help="管理播客订阅")
-episode_app = typer.Typer(name="episode", help="管理剧集与处理")
-ep_app = typer.Typer(name="ep", help="管理剧集（episode 别名）", hidden=True)
-export_app = typer.Typer(name="export", help="导出到 cbrain")
+feed_app = typer.Typer(
+    name="feed",
+    help="管理播客订阅",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+episode_app = typer.Typer(
+    name="episode",
+    help="管理剧集与处理",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+ep_app = typer.Typer(
+    name="ep",
+    help="管理剧集（episode 别名）",
+    hidden=True,
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
+export_app = typer.Typer(
+    name="export",
+    help="导出到 cbrain",
+    no_args_is_help=True,
+    rich_markup_mode="rich",
+)
 
 app.add_typer(feed_app)
 app.add_typer(episode_app)
@@ -1656,6 +1677,7 @@ def _export_with_metadata(src: Path, dest: Path, ep: Episode) -> None:
             fm_text = "\n".join(lines[1:end_idx])
             try:
                 import yaml as _yaml
+
                 fm = _yaml.safe_load(fm_text)
                 if isinstance(fm, dict):
                     existing_description = fm.get("description")
