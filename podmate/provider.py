@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .config import get as config_get, load as load_config
+from .config import get as config_get
+from .config import load as load_config
 
 _DEFAULT_PROVIDERS: dict[str, str] = {
     "transcriber": "deepgram",

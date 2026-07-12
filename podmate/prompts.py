@@ -84,7 +84,8 @@ class PromptLoader:
                     " based on contextual clues in the conversation.\n\n"
                     "Transcript:\n"
                     "{text}\n\n"
-                    "Return your analysis concisely in Chinese, 100 characters max for tone/style.\n"
+                    "Return your analysis concisely in Chinese, "
+                    "100 characters max for tone/style.\n"
                     "Then return speaker mapping in format:\n"
                     "SPEAKER_MAP: A=Real Name, B=Real Name, ..."
                 ),

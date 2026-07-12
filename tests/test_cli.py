@@ -37,6 +37,7 @@ from podmate.player import (
     play_episode,
     play_file,
 )
+from podmate.provider import ProviderConfig
 from podmate.transcriber import (
     _add_tone_markers,
     _format_time,
@@ -50,7 +51,6 @@ from podmate.translator import (
     _parse_summary,
     translate_segments,
 )
-from podmate.provider import ProviderConfig
 
 runner = CliRunner()
 

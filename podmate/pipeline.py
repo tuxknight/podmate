@@ -480,7 +480,12 @@ def _update_podcasts_index(export_dir: str) -> None:
             if desc_cell == "—":
                 description = ep_meta.get("description") or ""
                 desc_clean = description
-                for prefix in ("Brought to You By", "This episode is", "This podcast is", "Check out"):
+                for prefix in (
+                    "Brought to You By",
+                    "This episode is",
+                    "This podcast is",
+                    "Check out",
+                ):
                     if desc_clean.strip().startswith(prefix):
                         for sep in ("If you", "In today", "In this", "Today we", "We cover"):
                             idx = desc_clean.find(sep)

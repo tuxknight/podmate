@@ -16,7 +16,6 @@ import httpx
 from .db import update_episode_status
 from .provider import ProviderResolver
 
-
 # ── 本地 faster-whisper（单例） ────────────────────────
 
 _model: Any | None = None
@@ -172,7 +171,11 @@ async def _transcribe_via_whisper_api(
     api_key = cfg.api_key
     if not api_key:
         raise RuntimeError(
-            "未设置 Whisper API key。\n请运行: podmate config set transcriber.whisper-api.api_key 'your_key_here'"
+
+                "未设置 Whisper API key。\n"
+                "请运行: podmate config set transcriber.whisper-api.api_key "
+                "'your_key_here'"
+
         )
 
     if not os.path.isfile(audio_path):

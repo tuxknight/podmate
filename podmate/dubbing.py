@@ -13,7 +13,6 @@ import httpx
 
 from .provider import ProviderResolver
 
-
 _MAX_CHUNK_CHARS = 3000  # edge-tts max chars per call
 
 SPEAKER_VOICE_MAP = {
