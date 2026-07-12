@@ -333,6 +333,7 @@ async def _call_llm_with_config(
     progress_callback: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     """Use a specific ProviderConfig to call the LLM API with retries."""
+    start_time = time.monotonic()
     provider = cfg.name
     api_key = cfg.api_key or os.environ.get(f"{provider.upper()}_API_KEY", "")
     api_url = (
@@ -382,6 +383,20 @@ async def _call_llm_with_config(
                 resp.raise_for_status()
                 data = resp.json()
 
+                from .api_logger import log_api_call
+
+                usage = data.get("usage", {})
+                log_api_call(
+                    provider=provider,
+                    model=model,
+                    function_call=function_call,
+                    duration_sec=time.monotonic() - start_time,
+                    tokens_input=usage.get("prompt_tokens", 0),
+                    tokens_output=usage.get("completion_tokens", 0),
+                    success=True,
+                    episode_id=episode_id,
+                )
+
             choice = data["choices"][0]
             return {
                 "content": choice["message"]["content"],
@@ -392,6 +407,17 @@ async def _call_llm_with_config(
         except httpx.HTTPStatusError as e:
             last_error = e
             if e.response.status_code in (400, 401, 403):
+                from .api_logger import log_api_call
+
+                log_api_call(
+                    provider=provider,
+                    model=model,
+                    function_call=function_call,
+                    duration_sec=time.monotonic() - start_time,
+                    success=False,
+                    error_message=f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+                    episode_id=episode_id,
+                )
                 raise RuntimeError(
                     f"{provider} API 认证失败 (status={e.response.status_code}): "
                     f"{e.response.text[:200]}"
@@ -409,6 +435,17 @@ async def _call_llm_with_config(
             await asyncio.sleep(wait)
             continue
 
+    from .api_logger import log_api_call
+
+    log_api_call(
+        provider=provider,
+        model=model,
+        function_call=function_call,
+        duration_sec=time.monotonic() - start_time,
+        success=False,
+        error_message=str(last_error),
+        episode_id=episode_id,
+    )
     raise RuntimeError(f"{provider} API 调用失败（已重试 {_MAX_RETRIES} 次）: {last_error}")
 
 
